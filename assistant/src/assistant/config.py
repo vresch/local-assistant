@@ -11,6 +11,7 @@ class Settings:
     db_path: Path
     registry_path: Path
     debug_log_path: Path
+    llm_summary_path: Path
     llama_model_path: Path | None
     llama_context_size: int
     llama_max_tokens: int
@@ -36,6 +37,12 @@ def get_settings() -> Settings:
             env_file,
         ),
         debug_log_path=_path_setting("ASSISTANT_DEBUG_LOG_PATH", app_dir / "debug.log", file_env, env_file),
+        llm_summary_path=_path_setting(
+            "ASSISTANT_LLM_SUMMARY_PATH",
+            app_dir / "last-llm-request.md",
+            file_env,
+            env_file,
+        ),
         llama_model_path=_optional_path_setting("ASSISTANT_LLAMA_MODEL_PATH", file_env, env_file),
         llama_context_size=_int_setting("ASSISTANT_LLAMA_CONTEXT_SIZE", 4096, file_env),
         llama_max_tokens=_int_setting("ASSISTANT_LLAMA_MAX_TOKENS", 256, file_env),

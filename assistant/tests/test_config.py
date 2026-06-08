@@ -15,6 +15,7 @@ def test_settings_load_env_file_relative_to_env_location(tmp_path: Path, monkeyp
         "ASSISTANT_DB_PATH",
         "ASSISTANT_REGISTRY_PATH",
         "ASSISTANT_DEBUG_LOG_PATH",
+        "ASSISTANT_LLM_SUMMARY_PATH",
         "ASSISTANT_LLAMA_MODEL_PATH",
         "ASSISTANT_LLAMA_CONTEXT_SIZE",
         "ASSISTANT_LLAMA_MAX_TOKENS",
@@ -43,6 +44,7 @@ ASSISTANT_LLAMA_TEMPERATURE=0.1
     assert settings.db_path == tmp_path / ".local" / "assistant" / "assistant.db"
     assert settings.registry_path == tmp_path / "tools" / "registry.yaml"
     assert settings.debug_log_path == tmp_path / ".local" / "assistant" / "debug.log"
+    assert settings.llm_summary_path == tmp_path / ".local" / "assistant" / "last-llm-request.md"
     assert settings.llama_model_path == tmp_path / "models" / "local.gguf"
     assert settings.llama_context_size == 8192
     assert settings.llama_max_tokens == 128

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from assistant.config import get_settings
 from assistant.db import cleanup_database, connect
@@ -18,6 +21,22 @@ from assistant.tools.runner import run_tool
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
+
+DASHBOARD_BORDER = "cyan"
+DASHBOARD_HEADER = "bold cyan"
+DASHBOARD_LABEL = "cyan"
+DASHBOARD_VALUE = "white"
+DASHBOARD_MUTED = "dim"
+DASHBOARD_GOOD = "green"
+DASHBOARD_WARN = "yellow"
+DASHBOARD_BAD = "bold red"
+DASHBOARD_LLM = "magenta"
+
+STATUS_STYLES = {
+    "succeeded": DASHBOARD_GOOD,
+    "failed": DASHBOARD_BAD,
+    "running": DASHBOARD_WARN,
+}
 
 
 @app.command()
@@ -109,6 +128,7 @@ def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
                     f"local_model_used={answer.used_local_model}"
                 ),
             )
+            log_event(conn, run_id, "answer", answer.answer)
             log_event(conn, run_id, "answer_summary", answer.summary)
             console.print(answer.text)
             summary = (
@@ -135,26 +155,39 @@ def dashboard(limit: int = 10) -> None:
         counts = _dashboard_counts(conn)
         console.print(
             Panel(
-                "\n".join(
-                    [
-                        f"db_path={settings.db_path}",
-                        f"notes_dir={settings.notes_dir}",
-                        f"debug_log_path={settings.debug_log_path}",
-                        "configured_llm=llama-cpp-python",
-                        f"configured_model={settings.llama_model_path or 'none'}",
-                        "",
-                        f"documents={counts['documents']}",
-                        f"chunks={counts['chunks']}",
-                        f"runs={counts['runs']}",
-                        f"run_events={counts['run_events']}",
-                    ]
-                ),
-                title="Assistant Dashboard",
+                _dashboard_overview(settings, counts),
+                title=Text("Assistant Dashboard", style="bold white"),
+                border_style=DASHBOARD_BORDER,
             )
         )
         _print_recent_documents(conn, limit=limit)
         _print_recent_runs(conn, limit=limit)
+        _print_last_llm_summary(conn)
         _print_llm_events(conn, limit=limit)
+
+
+@app.command("save-llm-summary")
+def save_llm_summary(output: Path | None = typer.Option(None, "--output", "-o")) -> None:
+    """Save a markdown summary of the most recent ask run."""
+    settings = get_settings()
+    output_path = output or settings.llm_summary_path
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=save-llm-summary output=%s db_path=%s", output_path, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "save-llm-summary", str(output_path), "logs.llm_summary")
+        try:
+            summary = _last_llm_summary(conn)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(summary, encoding="utf-8")
+            message = f"saved last_llm_summary={output_path}"
+            log_event(conn, run_id, "llm_summary_saved", message)
+            finish_run(conn, run_id, "succeeded", message)
+            debug.info("command=save-llm-summary status=succeeded run_id=%s output=%s", run_id, output_path)
+            console.print(message)
+        except Exception as exc:
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=save-llm-summary status=failed run_id=%s", run_id)
+            raise
 
 
 @app.command("clean-db")
@@ -243,6 +276,43 @@ def _dashboard_counts(conn) -> dict[str, int]:
     }
 
 
+def _dashboard_overview(settings, counts: dict[str, int]) -> Text:
+    overview = Text()
+    _append_dashboard_kv(overview, "db_path", settings.db_path, value_style=DASHBOARD_MUTED)
+    _append_dashboard_kv(overview, "notes_dir", settings.notes_dir, value_style=DASHBOARD_MUTED)
+    _append_dashboard_kv(overview, "debug_log_path", settings.debug_log_path, value_style=DASHBOARD_MUTED)
+    _append_dashboard_kv(overview, "configured_llm", "llama-cpp-python", value_style=DASHBOARD_LLM)
+    _append_dashboard_kv(overview, "configured_model", settings.llama_model_path or "none", value_style=DASHBOARD_LLM)
+    overview.append("\n")
+    _append_dashboard_kv(overview, "documents", counts["documents"], value_style=DASHBOARD_GOOD)
+    _append_dashboard_kv(overview, "chunks", counts["chunks"], value_style=DASHBOARD_GOOD)
+    _append_dashboard_kv(overview, "runs", counts["runs"], value_style=DASHBOARD_WARN)
+    _append_dashboard_kv(overview, "run_events", counts["run_events"], value_style=DASHBOARD_WARN)
+    return overview
+
+
+def _append_dashboard_kv(text: Text, label: str, value: object, *, value_style: str = DASHBOARD_VALUE) -> None:
+    if text.plain:
+        text.append("\n")
+    text.append(label, style=DASHBOARD_LABEL)
+    text.append("=", style=DASHBOARD_MUTED)
+    text.append(str(value), style=value_style)
+
+
+def _dashboard_table(title: str, *, border_style: str = DASHBOARD_BORDER) -> Table:
+    return Table(
+        title=title,
+        title_style=DASHBOARD_HEADER,
+        header_style=DASHBOARD_HEADER,
+        border_style=border_style,
+        row_styles=["none", DASHBOARD_MUTED],
+    )
+
+
+def _styled_status(status: str) -> Text:
+    return Text(status, style=STATUS_STYLES.get(status, DASHBOARD_MUTED))
+
+
 def _print_recent_documents(conn, limit: int) -> None:
     rows = conn.execute(
         """
@@ -255,11 +325,11 @@ def _print_recent_documents(conn, limit: int) -> None:
         """,
         (limit,),
     ).fetchall()
-    table = Table(title="Recent Documents")
-    table.add_column("ID", justify="right")
-    table.add_column("Chunks", justify="right")
-    table.add_column("Indexed")
-    table.add_column("Path", overflow="fold")
+    table = _dashboard_table("Recent Documents")
+    table.add_column("ID", justify="right", style=DASHBOARD_MUTED)
+    table.add_column("Chunks", justify="right", style=DASHBOARD_GOOD)
+    table.add_column("Indexed", style=DASHBOARD_MUTED)
+    table.add_column("Path", overflow="fold", style=DASHBOARD_VALUE)
     for row in rows:
         table.add_row(str(row["id"]), str(row["chunks"]), row["indexed_at"], row["path"])
     console.print(table)
@@ -275,18 +345,18 @@ def _print_recent_runs(conn, limit: int) -> None:
         """,
         (limit,),
     ).fetchall()
-    table = Table(title="Recent Runs")
-    table.add_column("ID", justify="right")
-    table.add_column("Command")
+    table = _dashboard_table("Recent Runs")
+    table.add_column("ID", justify="right", style=DASHBOARD_MUTED)
+    table.add_column("Command", style=DASHBOARD_VALUE)
     table.add_column("Status")
-    table.add_column("Route")
-    table.add_column("Started")
-    table.add_column("Summary", overflow="fold")
+    table.add_column("Route", style=DASHBOARD_LLM)
+    table.add_column("Started", style=DASHBOARD_MUTED)
+    table.add_column("Summary", overflow="fold", style=DASHBOARD_MUTED)
     for row in rows:
         table.add_row(
             str(row["id"]),
             row["command"],
-            row["status"],
+            _styled_status(row["status"]),
             row["route"],
             row["started_at"],
             row["summary"] or "",
@@ -306,14 +376,82 @@ def _print_llm_events(conn, limit: int) -> None:
         """,
         (limit,),
     ).fetchall()
-    table = Table(title="LLM Events")
-    table.add_column("Run", justify="right")
-    table.add_column("Command")
-    table.add_column("Created")
-    table.add_column("Message", overflow="fold")
+    table = _dashboard_table("LLM Events", border_style=DASHBOARD_LLM)
+    table.add_column("Run", justify="right", style=DASHBOARD_MUTED)
+    table.add_column("Command", style=DASHBOARD_VALUE)
+    table.add_column("Created", style=DASHBOARD_MUTED)
+    table.add_column("Message", overflow="fold", style=DASHBOARD_LLM)
     for row in rows:
         table.add_row(str(row["run_id"]), row["command"], row["created_at"], row["message"])
     console.print(table)
+
+
+def _print_last_llm_summary(conn) -> None:
+    try:
+        summary = _last_llm_summary(conn)
+    except typer.BadParameter:
+        summary = "No ask runs found."
+    console.print(
+        Panel(
+            Text(summary, style=DASHBOARD_VALUE),
+            title=Text("Last LLM Request Summary", style="bold white"),
+            border_style=DASHBOARD_LLM,
+        )
+    )
+
+
+def _last_llm_summary(conn) -> str:
+    run = conn.execute(
+        """
+        SELECT id, input, status, summary, started_at, finished_at
+        FROM runs
+        WHERE command = 'ask'
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    if run is None:
+        raise typer.BadParameter("no ask runs found")
+
+    events = conn.execute(
+        """
+        SELECT event_type, message
+        FROM run_events
+        WHERE run_id = ?
+        ORDER BY id
+        """,
+        (run["id"],),
+    ).fetchall()
+    event_messages = {event["event_type"]: event["message"] for event in events}
+
+    return "\n".join(
+        [
+            "# Last LLM Request Summary",
+            "",
+            f"- Run ID: {run['id']}",
+            f"- Question: {run['input'] or ''}",
+            f"- Status: {run['status']}",
+            f"- Started: {run['started_at']}",
+            f"- Finished: {run['finished_at'] or ''}",
+            f"- Run summary: {run['summary'] or ''}",
+            f"- LLM: {event_messages.get('llm', 'none')}",
+            f"- Synthesis: {event_messages.get('synthesis', 'none')}",
+            f"- Normalized query: {event_messages.get('normalized_query', '')}",
+            "",
+            "## Answer Summary",
+            "",
+            event_messages.get("answer", "not stored for this run"),
+            "",
+            "## Run Summary",
+            "",
+            event_messages.get("answer_summary", ""),
+            "",
+            "## Retrieved Sources",
+            "",
+            event_messages.get("retrieved_sources", "none"),
+            "",
+        ]
+    )
 
 
 def _cleanup_summary(counts: dict[str, int], include_logs: bool) -> str:

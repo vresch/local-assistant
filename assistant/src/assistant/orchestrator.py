@@ -12,6 +12,7 @@ from assistant.notes.search import SearchResult, search_notes, to_fts_query
 @dataclass(frozen=True)
 class AnswerResult:
     text: str
+    answer: str
     results: list[SearchResult]
     normalized_query: str
     llm: str
@@ -34,10 +35,11 @@ def answer_question(
     normalized_query = to_fts_query(question)
     results = search_notes(conn, question, limit=limit)
     if not results:
+        direct_answer = "I could not find relevant notes for that question."
         text = "\n".join(
             [
                 "Answer:",
-                "I could not find relevant notes for that question.",
+                direct_answer,
                 "",
                 "Sources:",
                 "None",
@@ -48,6 +50,7 @@ def answer_question(
         )
         return AnswerResult(
             text=text,
+            answer=direct_answer,
             results=[],
             normalized_query=normalized_query,
             llm="none",
@@ -90,6 +93,7 @@ def answer_question(
     ]
     return AnswerResult(
         text="\n".join(lines),
+        answer=direct_answer,
         results=results,
         normalized_query=normalized_query,
         llm=llm,
@@ -125,9 +129,9 @@ def _llama_answer(
         _build_prompt(question, results),
         max_tokens=max_tokens,
         temperature=temperature,
-        stop=["\nSupporting notes:", "\nSources:", "\nNext action:"],
+        stop=["\nQuestion:", "\nSupporting notes:", "\nSources:", "\nNext action:"],
     )
-    text = _extract_llama_text(response)
+    text = _clean_generated_answer(_extract_llama_text(response))
     return text or _extractive_answer(results)
 
 
@@ -179,6 +183,14 @@ def _extract_llama_text(response: Any) -> str:
                 if isinstance(text, str):
                     return text.strip()
     return str(response).strip()
+
+
+def _clean_generated_answer(text: str) -> str:
+    cleaned = text.strip()
+    for marker in ("\nQuestion:", "\nSupporting notes:", "\nSources:", "\nNext action:"):
+        if marker in cleaned:
+            cleaned = cleaned.split(marker, 1)[0].strip()
+    return cleaned
 
 
 def _extractive_answer(results: list[SearchResult]) -> str:

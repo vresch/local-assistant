@@ -48,10 +48,16 @@ Skip model synthesis even when a model is configured:
 uv run assistant ask "What did I decide about search?" --no-model
 ```
 
-Show a read-only terminal dashboard for stored notes, recent runs, and LLM usage:
+Show a read-only terminal dashboard for stored notes, recent runs, the latest LLM request summary, and LLM usage:
 
 ```bash
 uv run assistant dashboard
+```
+
+Save a markdown summary of the most recent `assistant ask` run:
+
+```bash
+uv run assistant save-llm-summary
 ```
 
 Clean indexed note data from the SQLite database:
@@ -92,6 +98,7 @@ Environment variables:
 - `ASSISTANT_DB_PATH`: SQLite database path, defaults to `~/.local/share/local-assistant/assistant.db`
 - `ASSISTANT_REGISTRY_PATH`: tool registry path, defaults to `./tools/registry.yaml`
 - `ASSISTANT_DEBUG_LOG_PATH`: debug log file path, defaults to `~/.local/share/local-assistant/debug.log`
+- `ASSISTANT_LLM_SUMMARY_PATH`: saved last LLM request summary path, defaults to `last-llm-request.md` under `ASSISTANT_HOME`
 - `ASSISTANT_HOME`: base directory for default local state
 - `ASSISTANT_LLAMA_MODEL_PATH`: optional path to a local GGUF model for `assistant ask`
 - `ASSISTANT_LLAMA_CONTEXT_SIZE`: llama.cpp context window, defaults to `4096`

@@ -33,7 +33,7 @@ def test_answer_question_uses_llama_when_model_path_is_configured(
         def __call__(self, prompt: str, **kwargs: Any) -> dict[str, object]:
             FakeLlama.prompt = prompt
             FakeLlama.call_kwargs = kwargs
-            return {"choices": [{"text": "SQLite FTS5 should be used."}]}
+            return {"choices": [{"text": "SQLite FTS5 should be used.\nQuestion: extra prompt text"}]}
 
     monkeypatch.setattr("assistant.orchestrator._load_llama_class", lambda: FakeLlama)
 
@@ -52,6 +52,7 @@ def test_answer_question_uses_llama_when_model_path_is_configured(
     assert answer.llm == "llama-cpp-python"
     assert answer.local_model == str(model_path)
     assert f"llm=llama-cpp-python; model={model_path}" in answer.summary
+    assert answer.answer == "SQLite FTS5 should be used."
     assert "SQLite FTS5 should be used." in answer.text
     assert "The strongest matching note says" not in answer.text
     assert FakeLlama.init_kwargs == {
@@ -61,6 +62,7 @@ def test_answer_question_uses_llama_when_model_path_is_configured(
     }
     assert FakeLlama.call_kwargs["max_tokens"] == 64
     assert FakeLlama.call_kwargs["temperature"] == 0.0
+    assert "\nQuestion:" in FakeLlama.call_kwargs["stop"]
     assert "Local notes:" in FakeLlama.prompt
     assert "SQLite FTS5 powers local note search." in FakeLlama.prompt
 
@@ -80,4 +82,5 @@ def test_answer_question_skips_llama_without_model_path(tmp_path: Path) -> None:
     assert answer.used_local_model is False
     assert answer.llm == "none"
     assert answer.local_model is None
+    assert "The strongest matching note says" in answer.answer
     assert "The strongest matching note says" in answer.text
