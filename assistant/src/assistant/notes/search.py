@@ -12,6 +12,7 @@ TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 class SearchResult:
     path: str
     heading: str | None
+    chunk_index: int
     snippet: str
     content: str
     rank: float
@@ -26,6 +27,7 @@ def search_notes(conn: sqlite3.Connection, query: str, limit: int = 5) -> list[S
         SELECT
             chunks_fts.path,
             NULLIF(chunks_fts.heading, '') AS heading,
+            chunks.chunk_index,
             snippet(chunks_fts, 3, '[', ']', ' ... ', 24) AS snippet,
             chunks.content,
             bm25(chunks_fts) AS rank
@@ -41,6 +43,7 @@ def search_notes(conn: sqlite3.Connection, query: str, limit: int = 5) -> list[S
         SearchResult(
             path=row["path"],
             heading=row["heading"],
+            chunk_index=int(row["chunk_index"]),
             snippet=row["snippet"],
             content=row["content"],
             rank=float(row["rank"]),

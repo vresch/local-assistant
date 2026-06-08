@@ -63,18 +63,29 @@ def search(query: str, limit: int = 5) -> None:
 
 
 @app.command()
-def ask(question: str, limit: int = 3) -> None:
-    """Answer from indexed notes without using an LLM."""
+def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
+    """Answer a question from indexed notes."""
     settings = get_settings()
     debug = get_debug_logger(settings.debug_log_path)
-    debug.info("command=ask question=%r limit=%s db_path=%s", question, limit, settings.db_path)
+    debug.info(
+        "command=ask question=%r limit=%s no_model=%s db_path=%s",
+        question,
+        limit,
+        no_model,
+        settings.db_path,
+    )
     with connect(settings.db_path) as conn:
-        run_id = start_run(conn, "ask", question, "notes.ask")
+        run_id = start_run(conn, "ask", question, "local_answer")
         try:
-            answer, results = answer_question(conn, question, limit=limit)
-            console.print(answer)
-            finish_run(conn, run_id, "succeeded", f"results={len(results)}")
-            debug.info("command=ask status=succeeded run_id=%s results=%s", run_id, len(results))
+            answer = answer_question(conn, question, limit=limit, use_model=not no_model)
+            log_event(conn, run_id, "normalized_query", answer.normalized_query)
+            log_event(conn, run_id, "retrieved_sources", "\n".join(answer.sources) or "none")
+            log_event(conn, run_id, "synthesis", f"local_model_used={answer.used_local_model}")
+            log_event(conn, run_id, "answer_summary", answer.summary)
+            console.print(answer.text)
+            summary = f"results={len(answer.results)} local_model_used={answer.used_local_model}"
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=ask status=succeeded run_id=%s %s", run_id, summary)
         except Exception as exc:
             finish_run(conn, run_id, "failed", str(exc))
             debug.exception("command=ask status=failed run_id=%s", run_id)

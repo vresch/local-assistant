@@ -22,6 +22,7 @@ def test_index_and_search_markdown_notes(tmp_path: Path) -> None:
     assert len(results) == 1
     assert results[0].path == str(note)
     assert results[0].heading == "Alpha"
+    assert results[0].chunk_index == 0
     assert "local" in results[0].snippet.lower()
 
 

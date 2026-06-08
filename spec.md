@@ -362,14 +362,22 @@ Example:
 assistant ask "What do my notes say about sound healing?"
 ```
 
+Purpose:
+
+`assistant ask` turns a natural-language question into a grounded answer using the local notes index. It should behave like a retrieval-based question answering command, not a general chatbot.
+
 Flow:
 
 ```text
 User input
 ↓
-Search notes
+Normalize question
 ↓
-Retrieve relevant chunks
+Search SQLite FTS5 notes index
+↓
+Retrieve top matching chunks
+↓
+Build grounded context from chunks
 ↓
 Local synthesis
 ↓
@@ -384,6 +392,107 @@ Expected answer style:
 * Supporting notes
 * Source references
 * Optional next action
+
+Command shape:
+
+```bash
+assistant ask "QUESTION" [--limit N] [--no-model]
+```
+
+Arguments and options:
+
+* `QUESTION`: Required natural-language question.
+* `--limit N`: Optional maximum number of chunks to retrieve. Default: `5`.
+* `--no-model`: Optional flag to disable local model synthesis and use deterministic extractive synthesis.
+
+Retrieval behavior:
+
+1. Use the existing SQLite FTS5 index.
+2. Search against chunk content and headings.
+3. Retrieve the top ranked chunks, ordered by FTS rank.
+4. Include document path, heading, chunk index, and snippet for each source.
+5. Do not use vector search in Phase 1.
+6. Do not call a remote model in Phase 1.
+
+Synthesis behavior:
+
+1. The answer must be grounded only in retrieved chunks.
+2. If a local model provider is configured, pass the question and retrieved chunks into a simple prompt template.
+3. If no local model provider is configured, produce an extractive answer from the strongest matching chunks.
+4. If the retrieved chunks do not contain enough evidence, say so directly.
+5. Do not invent facts, sources, or user preferences.
+6. Prefer concise answers over broad summaries.
+
+Prompt contract for optional local model:
+
+```text
+You answer questions using only the provided local notes.
+If the notes do not contain enough information, say that clearly.
+Return:
+1. Direct answer
+2. Supporting notes
+3. Sources
+4. Optional next action
+
+Question:
+{question}
+
+Local notes:
+{retrieved_chunks}
+```
+
+Output format:
+
+```text
+Answer:
+...
+
+Supporting notes:
+- ...
+- ...
+
+Sources:
+1. ~/notes/path/to/file.md - Heading - chunk 3
+2. ~/notes/another-file.md - chunk 1
+
+Next action:
+...
+```
+
+Empty-result behavior:
+
+If no relevant chunks are found, return:
+
+```text
+Answer:
+I could not find relevant notes for that question.
+
+Sources:
+None
+
+Next action:
+Try rephrasing the question or run `assistant index` if your notes changed.
+```
+
+Logging requirements:
+
+Each `assistant ask` run must log:
+
+* Original question
+* Normalized query
+* Route: `local_answer`
+* Retrieved source references
+* Whether local model synthesis was used
+* Final answer summary
+* Errors, if any
+
+Success criteria:
+
+* Answers are based on local notes only.
+* Sources are always shown when chunks are used.
+* Unsupported questions produce an explicit insufficient-context response.
+* The command works without a configured model.
+* The command writes a local run log.
 
 ---
 
