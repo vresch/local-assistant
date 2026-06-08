@@ -1,0 +1,5 @@
+tools:
+  hello:
+    description: Print a smoke-test message.
+    command: ["python", "-c", "print('hello from assistant tool')"]
+    requires_approval: false
