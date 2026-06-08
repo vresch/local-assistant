@@ -35,10 +35,23 @@ Search indexed notes:
 uv run assistant search "project alpha"
 ```
 
-Ask a question using only retrieved notes. This does not call an LLM yet:
+Ask a question using retrieved notes. If `ASSISTANT_LLAMA_MODEL_PATH` points to a local GGUF model,
+the answer is synthesized with llama.cpp; otherwise it falls back to an extractive answer:
 
 ```bash
 uv run assistant ask "What did I decide about search?"
+```
+
+Skip model synthesis even when a model is configured:
+
+```bash
+uv run assistant ask "What did I decide about search?" --no-model
+```
+
+Show a read-only terminal dashboard for stored notes, recent runs, and LLM usage:
+
+```bash
+uv run assistant dashboard
 ```
 
 Clean indexed note data from the SQLite database:
@@ -80,6 +93,10 @@ Environment variables:
 - `ASSISTANT_REGISTRY_PATH`: tool registry path, defaults to `./tools/registry.yaml`
 - `ASSISTANT_DEBUG_LOG_PATH`: debug log file path, defaults to `~/.local/share/local-assistant/debug.log`
 - `ASSISTANT_HOME`: base directory for default local state
+- `ASSISTANT_LLAMA_MODEL_PATH`: optional path to a local GGUF model for `assistant ask`
+- `ASSISTANT_LLAMA_CONTEXT_SIZE`: llama.cpp context window, defaults to `4096`
+- `ASSISTANT_LLAMA_MAX_TOKENS`: max generated answer tokens, defaults to `256`
+- `ASSISTANT_LLAMA_TEMPERATURE`: generation temperature, defaults to `0.2`
 
 ## Data
 

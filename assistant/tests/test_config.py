@@ -15,6 +15,10 @@ def test_settings_load_env_file_relative_to_env_location(tmp_path: Path, monkeyp
         "ASSISTANT_DB_PATH",
         "ASSISTANT_REGISTRY_PATH",
         "ASSISTANT_DEBUG_LOG_PATH",
+        "ASSISTANT_LLAMA_MODEL_PATH",
+        "ASSISTANT_LLAMA_CONTEXT_SIZE",
+        "ASSISTANT_LLAMA_MAX_TOKENS",
+        "ASSISTANT_LLAMA_TEMPERATURE",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -25,6 +29,10 @@ ASSISTANT_NOTES_DIR=notes/pages
 ASSISTANT_DB_PATH=.local/assistant/assistant.db
 ASSISTANT_REGISTRY_PATH=tools/registry.yaml
 ASSISTANT_DEBUG_LOG_PATH=.local/assistant/debug.log
+ASSISTANT_LLAMA_MODEL_PATH=models/local.gguf
+ASSISTANT_LLAMA_CONTEXT_SIZE=8192
+ASSISTANT_LLAMA_MAX_TOKENS=128
+ASSISTANT_LLAMA_TEMPERATURE=0.1
 """.strip(),
         encoding="utf-8",
     )
@@ -35,6 +43,10 @@ ASSISTANT_DEBUG_LOG_PATH=.local/assistant/debug.log
     assert settings.db_path == tmp_path / ".local" / "assistant" / "assistant.db"
     assert settings.registry_path == tmp_path / "tools" / "registry.yaml"
     assert settings.debug_log_path == tmp_path / ".local" / "assistant" / "debug.log"
+    assert settings.llama_model_path == tmp_path / "models" / "local.gguf"
+    assert settings.llama_context_size == 8192
+    assert settings.llama_max_tokens == 128
+    assert settings.llama_temperature == 0.1
 
 
 def test_environment_variables_override_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

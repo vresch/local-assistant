@@ -11,6 +11,10 @@ class Settings:
     db_path: Path
     registry_path: Path
     debug_log_path: Path
+    llama_model_path: Path | None
+    llama_context_size: int
+    llama_max_tokens: int
+    llama_temperature: float
 
 
 def get_settings() -> Settings:
@@ -32,6 +36,10 @@ def get_settings() -> Settings:
             env_file,
         ),
         debug_log_path=_path_setting("ASSISTANT_DEBUG_LOG_PATH", app_dir / "debug.log", file_env, env_file),
+        llama_model_path=_optional_path_setting("ASSISTANT_LLAMA_MODEL_PATH", file_env, env_file),
+        llama_context_size=_int_setting("ASSISTANT_LLAMA_CONTEXT_SIZE", 4096, file_env),
+        llama_max_tokens=_int_setting("ASSISTANT_LLAMA_MAX_TOKENS", 256, file_env),
+        llama_temperature=_float_setting("ASSISTANT_LLAMA_TEMPERATURE", 0.2, file_env),
     )
 
 
@@ -63,6 +71,33 @@ def _path_setting(name: str, default: Path, file_env: dict[str, str], env_file: 
     if name in file_env:
         return _resolve_file_env_path(file_env[name], env_file)
     return default.expanduser()
+
+
+def _optional_path_setting(name: str, file_env: dict[str, str], env_file: Path | None) -> Path | None:
+    if name in os.environ:
+        value = os.environ[name].strip()
+        return Path(value).expanduser() if value else None
+    if name in file_env:
+        value = file_env[name].strip()
+        return _resolve_file_env_path(value, env_file) if value else None
+    return None
+
+
+def _int_setting(name: str, default: int, file_env: dict[str, str]) -> int:
+    raw = os.environ.get(name, file_env.get(name))
+    if raw is None or not raw.strip():
+        return default
+    value = int(raw)
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than zero")
+    return value
+
+
+def _float_setting(name: str, default: float, file_env: dict[str, str]) -> float:
+    raw = os.environ.get(name, file_env.get(name))
+    if raw is None or not raw.strip():
+        return default
+    return float(raw)
 
 
 def _resolve_file_env_path(value: str, env_file: Path | None) -> Path:

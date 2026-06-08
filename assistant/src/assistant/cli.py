@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 from assistant.config import get_settings
@@ -54,8 +55,11 @@ def search(query: str, limit: int = 5) -> None:
         try:
             results = search_notes(conn, query, limit=limit)
             _print_results(results)
-            finish_run(conn, run_id, "succeeded", f"results={len(results)}")
-            debug.info("command=search status=succeeded run_id=%s results=%s", run_id, len(results))
+            llm_summary = "llm=none model=none reason=search_only"
+            log_event(conn, run_id, "llm", llm_summary)
+            summary = f"results={len(results)} {llm_summary}"
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=search status=succeeded run_id=%s %s", run_id, summary)
         except Exception as exc:
             finish_run(conn, run_id, "failed", str(exc))
             debug.exception("command=search status=failed run_id=%s", run_id)
@@ -77,19 +81,80 @@ def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
     with connect(settings.db_path) as conn:
         run_id = start_run(conn, "ask", question, "local_answer")
         try:
-            answer = answer_question(conn, question, limit=limit, use_model=not no_model)
+            answer = answer_question(
+                conn,
+                question,
+                limit=limit,
+                use_model=not no_model,
+                model_path=settings.llama_model_path,
+                context_size=settings.llama_context_size,
+                max_tokens=settings.llama_max_tokens,
+                temperature=settings.llama_temperature,
+            )
             log_event(conn, run_id, "normalized_query", answer.normalized_query)
             log_event(conn, run_id, "retrieved_sources", "\n".join(answer.sources) or "none")
-            log_event(conn, run_id, "synthesis", f"local_model_used={answer.used_local_model}")
+            log_event(
+                conn,
+                run_id,
+                "llm",
+                f"llm={answer.llm} model={answer.local_model or 'none'}",
+            )
+            log_event(
+                conn,
+                run_id,
+                "synthesis",
+                (
+                    f"llm={answer.llm} "
+                    f"model={answer.local_model or 'none'} "
+                    f"local_model_used={answer.used_local_model}"
+                ),
+            )
             log_event(conn, run_id, "answer_summary", answer.summary)
             console.print(answer.text)
-            summary = f"results={len(answer.results)} local_model_used={answer.used_local_model}"
+            summary = (
+                f"results={len(answer.results)} "
+                f"llm={answer.llm} "
+                f"model={answer.local_model or 'none'} "
+                f"local_model_used={answer.used_local_model}"
+            )
             finish_run(conn, run_id, "succeeded", summary)
             debug.info("command=ask status=succeeded run_id=%s %s", run_id, summary)
         except Exception as exc:
             finish_run(conn, run_id, "failed", str(exc))
             debug.exception("command=ask status=failed run_id=%s", run_id)
             raise
+
+
+@app.command()
+def dashboard(limit: int = 10) -> None:
+    """Show a read-only dashboard of local assistant storage and logs."""
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=dashboard limit=%s db_path=%s", limit, settings.db_path)
+    with connect(settings.db_path) as conn:
+        counts = _dashboard_counts(conn)
+        console.print(
+            Panel(
+                "\n".join(
+                    [
+                        f"db_path={settings.db_path}",
+                        f"notes_dir={settings.notes_dir}",
+                        f"debug_log_path={settings.debug_log_path}",
+                        "configured_llm=llama-cpp-python",
+                        f"configured_model={settings.llama_model_path or 'none'}",
+                        "",
+                        f"documents={counts['documents']}",
+                        f"chunks={counts['chunks']}",
+                        f"runs={counts['runs']}",
+                        f"run_events={counts['run_events']}",
+                    ]
+                ),
+                title="Assistant Dashboard",
+            )
+        )
+        _print_recent_documents(conn, limit=limit)
+        _print_recent_runs(conn, limit=limit)
+        _print_llm_events(conn, limit=limit)
 
 
 @app.command("clean-db")
@@ -166,6 +231,88 @@ def _print_results(results: list[object]) -> None:
     table.add_column("Snippet")
     for result in results:
         table.add_row(result.path, result.heading or "", result.snippet)
+    console.print(table)
+
+
+def _dashboard_counts(conn) -> dict[str, int]:
+    return {
+        "documents": int(conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]),
+        "chunks": int(conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]),
+        "runs": int(conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]),
+        "run_events": int(conn.execute("SELECT COUNT(*) FROM run_events").fetchone()[0]),
+    }
+
+
+def _print_recent_documents(conn, limit: int) -> None:
+    rows = conn.execute(
+        """
+        SELECT documents.id, documents.path, documents.indexed_at, COUNT(chunks.id) AS chunks
+        FROM documents
+        LEFT JOIN chunks ON chunks.document_id = documents.id
+        GROUP BY documents.id
+        ORDER BY documents.indexed_at DESC, documents.id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    table = Table(title="Recent Documents")
+    table.add_column("ID", justify="right")
+    table.add_column("Chunks", justify="right")
+    table.add_column("Indexed")
+    table.add_column("Path", overflow="fold")
+    for row in rows:
+        table.add_row(str(row["id"]), str(row["chunks"]), row["indexed_at"], row["path"])
+    console.print(table)
+
+
+def _print_recent_runs(conn, limit: int) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, command, route, status, summary, started_at
+        FROM runs
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    table = Table(title="Recent Runs")
+    table.add_column("ID", justify="right")
+    table.add_column("Command")
+    table.add_column("Status")
+    table.add_column("Route")
+    table.add_column("Started")
+    table.add_column("Summary", overflow="fold")
+    for row in rows:
+        table.add_row(
+            str(row["id"]),
+            row["command"],
+            row["status"],
+            row["route"],
+            row["started_at"],
+            row["summary"] or "",
+        )
+    console.print(table)
+
+
+def _print_llm_events(conn, limit: int) -> None:
+    rows = conn.execute(
+        """
+        SELECT runs.id AS run_id, runs.command, run_events.message, run_events.created_at
+        FROM run_events
+        JOIN runs ON runs.id = run_events.run_id
+        WHERE run_events.event_type = 'llm'
+        ORDER BY run_events.id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    table = Table(title="LLM Events")
+    table.add_column("Run", justify="right")
+    table.add_column("Command")
+    table.add_column("Created")
+    table.add_column("Message", overflow="fold")
+    for row in rows:
+        table.add_row(str(row["run_id"]), row["command"], row["created_at"], row["message"])
     console.print(table)
 
 
