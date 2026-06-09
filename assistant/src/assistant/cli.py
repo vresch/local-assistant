@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 
 import typer
@@ -73,7 +74,8 @@ def search(query: str, limit: int = 5) -> None:
     with connect(settings.db_path) as conn:
         run_id = start_run(conn, "search", query, "notes.search")
         try:
-            results = search_notes(conn, query, limit=limit)
+            with _status("Searching notes..."):
+                results = search_notes(conn, query, limit=limit)
             _print_results(results)
             llm_summary = "llm=none model=none reason=search_only"
             log_event(conn, run_id, "llm", llm_summary)
@@ -101,16 +103,17 @@ def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
     with connect(settings.db_path) as conn:
         run_id = start_run(conn, "ask", question, "local_answer")
         try:
-            answer = answer_question(
-                conn,
-                question,
-                limit=limit,
-                use_model=not no_model,
-                model_path=settings.llama_model_path,
-                context_size=settings.llama_context_size,
-                max_tokens=settings.llama_max_tokens,
-                temperature=settings.llama_temperature,
-            )
+            with _status("Thinking with local notes..."):
+                answer = answer_question(
+                    conn,
+                    question,
+                    limit=limit,
+                    use_model=not no_model,
+                    model_path=settings.llama_model_path,
+                    context_size=settings.llama_context_size,
+                    max_tokens=settings.llama_max_tokens,
+                    temperature=settings.llama_temperature,
+                )
             log_event(conn, run_id, "normalized_query", answer.normalized_query)
             log_event(conn, run_id, "retrieved_sources", "\n".join(answer.sources) or "none")
             log_event(
@@ -275,6 +278,12 @@ def _print_results(results: list[object]) -> None:
     for result in results:
         table.add_row(result.path, result.heading or "", result.snippet)
     console.print(table)
+
+
+def _status(message: str):
+    if console.is_terminal:
+        return console.status(message, spinner="dots")
+    return nullcontext()
 
 
 def _dashboard_counts(conn) -> dict[str, int]:
