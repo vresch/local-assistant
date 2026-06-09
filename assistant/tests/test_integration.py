@@ -145,6 +145,38 @@ def test_cli_ask_handles_empty_results_and_no_model_flag(tmp_path: Path) -> None
     ]
 
 
+def test_cli_categorise_notes_prints_and_logs_categories(tmp_path: Path) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "project.md").write_text(
+        "# Project Alpha\nRoadmap and launch milestones.",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "assistant.db"
+    env = {
+        "ASSISTANT_NOTES_DIR": str(notes_dir),
+        "ASSISTANT_DB_PATH": str(db_path),
+        "ASSISTANT_DEBUG_LOG_PATH": str(tmp_path / "debug.log"),
+        "ASSISTANT_LLAMA_MODEL_PATH": "",
+    }
+
+    assert runner.invoke(cli.app, ["index"], env=env).exit_code == 0
+    result = runner.invoke(cli.app, ["categorise-notes"], env=env)
+
+    assert result.exit_code == 0
+    assert "Note Categories" in result.output
+    assert "project.md" in result.output
+    assert "project" in result.output
+    assert "roadmap" in result.output
+
+    with sqlite3.connect(db_path) as conn:
+        run = conn.execute("SELECT command, route, status, summary FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+        events = conn.execute("SELECT event_type, message FROM run_events WHERE run_id = 2").fetchall()
+
+    assert run == ("categorise-notes", "notes.categorise", "succeeded", "notes=1 project=1")
+    assert events == [("categories", "notes=1 project=1")]
+
+
 def test_cli_save_llm_summary_writes_latest_ask_summary(tmp_path: Path) -> None:
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()

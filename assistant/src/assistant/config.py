@@ -12,10 +12,16 @@ class Settings:
     registry_path: Path
     debug_log_path: Path
     llm_summary_path: Path
+    research_dir: Path
     llama_model_path: Path | None
     llama_context_size: int
     llama_max_tokens: int
     llama_temperature: float
+    remote_provider: str | None
+    remote_model: str | None
+    remote_api_key: str | None
+    remote_base_url: str
+    remote_timeout: float
 
 
 def get_settings() -> Settings:
@@ -27,8 +33,9 @@ def get_settings() -> Settings:
         file_env,
         env_file,
     )
+    notes_dir = _path_setting("ASSISTANT_NOTES_DIR", Path.home() / "notes", file_env, env_file)
     return Settings(
-        notes_dir=_path_setting("ASSISTANT_NOTES_DIR", Path.home() / "notes", file_env, env_file),
+        notes_dir=notes_dir,
         db_path=_path_setting("ASSISTANT_DB_PATH", app_dir / "assistant.db", file_env, env_file),
         registry_path=_path_setting(
             "ASSISTANT_REGISTRY_PATH",
@@ -43,10 +50,16 @@ def get_settings() -> Settings:
             file_env,
             env_file,
         ),
+        research_dir=_path_setting("ASSISTANT_RESEARCH_DIR", notes_dir / "research", file_env, env_file),
         llama_model_path=_optional_path_setting("ASSISTANT_LLAMA_MODEL_PATH", file_env, env_file),
         llama_context_size=_int_setting("ASSISTANT_LLAMA_CONTEXT_SIZE", 4096, file_env),
         llama_max_tokens=_int_setting("ASSISTANT_LLAMA_MAX_TOKENS", 256, file_env),
         llama_temperature=_float_setting("ASSISTANT_LLAMA_TEMPERATURE", 0.2, file_env),
+        remote_provider=_optional_str_setting("ASSISTANT_REMOTE_PROVIDER", file_env),
+        remote_model=_optional_str_setting("ASSISTANT_REMOTE_MODEL", file_env),
+        remote_api_key=_optional_str_setting("ASSISTANT_REMOTE_API_KEY", file_env),
+        remote_base_url=_str_setting("ASSISTANT_REMOTE_BASE_URL", "https://api.openai.com/v1", file_env),
+        remote_timeout=_float_setting("ASSISTANT_REMOTE_TIMEOUT", 30.0, file_env),
     )
 
 
@@ -105,6 +118,20 @@ def _float_setting(name: str, default: float, file_env: dict[str, str]) -> float
     if raw is None or not raw.strip():
         return default
     return float(raw)
+
+
+def _str_setting(name: str, default: str, file_env: dict[str, str]) -> str:
+    raw = os.environ.get(name, file_env.get(name))
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip()
+
+
+def _optional_str_setting(name: str, file_env: dict[str, str]) -> str | None:
+    raw = os.environ.get(name, file_env.get(name))
+    if raw is None or not raw.strip():
+        return None
+    return raw.strip()
 
 
 def _resolve_file_env_path(value: str, env_file: Path | None) -> Path:

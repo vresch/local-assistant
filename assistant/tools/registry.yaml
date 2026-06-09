@@ -3,3 +3,7 @@ tools:
     description: Print a smoke-test message.
     command: ["python", "-c", "print('hello from assistant tool')"]
     requires_approval: false
+  categorise-notes:
+    description: Categorise indexed Markdown notes using local keyword rules.
+    command: ["assistant", "categorise-notes"]
+    requires_approval: false

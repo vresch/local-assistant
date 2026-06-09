@@ -12,10 +12,13 @@ from rich.text import Text
 from assistant.config import get_settings
 from assistant.db import cleanup_database, connect
 from assistant.logs.debug import get_debug_logger
-from assistant.logs.logger import finish_run, log_event, start_run
+from assistant.logs.logger import finish_run, log_event, start_run, update_run_route
+from assistant.notes.categorizer import NoteCategory, categorise_notes
 from assistant.notes.indexer import index_notes
 from assistant.notes.search import search_notes
 from assistant.orchestrator import answer_question
+from assistant.providers.remote import build_remote_provider
+from assistant.research import research_question
 from assistant.tools.registry import load_registry
 from assistant.tools.runner import run_tool
 from assistant.ui import run_ui
@@ -88,6 +91,28 @@ def search(query: str, limit: int = 5) -> None:
             raise
 
 
+@app.command("categorise-notes")
+def categorise_notes_command() -> None:
+    """Categorise indexed notes with local keyword rules."""
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=categorise-notes db_path=%s", settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "categorise-notes", None, "notes.categorise")
+        try:
+            with _status("Categorising indexed notes..."):
+                categories = categorise_notes(conn)
+            _print_categories(categories)
+            summary = _category_summary(categories)
+            log_event(conn, run_id, "categories", summary)
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=categorise-notes status=succeeded run_id=%s %s", run_id, summary)
+        except Exception as exc:
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=categorise-notes status=failed run_id=%s", run_id)
+            raise
+
+
 @app.command()
 def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
     """Answer a question from indexed notes."""
@@ -146,6 +171,84 @@ def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
         except Exception as exc:
             finish_run(conn, run_id, "failed", str(exc))
             debug.exception("command=ask status=failed run_id=%s", run_id)
+            raise
+
+
+@app.command()
+def research(
+    question: str,
+    no_remote: bool = typer.Option(False, "--no-remote", help="Use local notes only."),
+    force_remote: bool = typer.Option(False, "--force-remote", help="Use the configured remote model after local search."),
+    limit: int = typer.Option(8, "--limit", min=1, help="Maximum number of local chunks to retrieve."),
+) -> None:
+    """Research a question using local notes first and optional remote reasoning."""
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info(
+        "command=research question=%r limit=%s no_remote=%s force_remote=%s db_path=%s",
+        question,
+        limit,
+        no_remote,
+        force_remote,
+        settings.db_path,
+    )
+    remote_provider = None
+    provider_config_error = None
+    if not no_remote:
+        try:
+            remote_provider = build_remote_provider(settings)
+        except Exception as exc:
+            provider_config_error = str(exc)
+
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "research", question, "routing")
+        try:
+            if provider_config_error:
+                log_event(conn, run_id, "error", provider_config_error)
+            with _status("Researching with local notes first..."):
+                result = research_question(
+                    conn,
+                    question,
+                    settings.research_dir,
+                    limit=limit,
+                    allow_remote=not no_remote,
+                    force_remote=force_remote,
+                    remote_provider=remote_provider,
+                )
+            update_run_route(conn, run_id, result.route)
+            log_event(conn, run_id, "original_question", question)
+            log_event(conn, run_id, "normalized_query", result.normalized_query)
+            log_event(conn, run_id, "route", result.route)
+            log_event(conn, run_id, "retrieved_sources", "\n".join(result.sources) or "none")
+            log_event(conn, run_id, "escalation_decision", result.escalation_decision)
+            log_event(conn, run_id, "escalation_reason", result.escalation_reason)
+            log_event(
+                conn,
+                run_id,
+                "llm",
+                (
+                    f"route={result.route} "
+                    f"remote_used={result.remote_used} "
+                    f"provider={result.provider or 'none'} "
+                    f"model={result.model or 'none'}"
+                ),
+            )
+            log_event(conn, run_id, "stored_result_path", str(result.stored_path))
+            log_event(conn, run_id, "answer_summary", result.summary)
+            for error in result.errors:
+                log_event(conn, run_id, "error", error)
+            console.print(result.text)
+            summary = (
+                f"results={len(result.results)} "
+                f"route={result.route} "
+                f"remote_used={result.remote_used} "
+                f"stored={result.stored_path}"
+            )
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=research status=succeeded run_id=%s %s", run_id, summary)
+        except Exception as exc:
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=research status=failed run_id=%s", run_id)
             raise
 
 
@@ -278,6 +381,31 @@ def _print_results(results: list[object]) -> None:
     for result in results:
         table.add_row(result.path, result.heading or "", result.snippet)
     console.print(table)
+
+
+def _print_categories(categories: list[NoteCategory]) -> None:
+    table = Table(title="Note Categories")
+    table.add_column("Path", overflow="fold")
+    table.add_column("Category")
+    table.add_column("Score", justify="right")
+    table.add_column("Matched Terms", overflow="fold")
+    for category in categories:
+        table.add_row(
+            category.path,
+            category.category,
+            str(category.score),
+            ", ".join(category.matched_terms) or "",
+        )
+    console.print(table)
+
+
+def _category_summary(categories: list[NoteCategory]) -> str:
+    counts: dict[str, int] = {}
+    for category in categories:
+        counts[category.category] = counts.get(category.category, 0) + 1
+    parts = [f"notes={len(categories)}"]
+    parts.extend(f"{name}={counts[name]}" for name in sorted(counts))
+    return " ".join(parts)
 
 
 def _status(message: str):

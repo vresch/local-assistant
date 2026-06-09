@@ -48,6 +48,19 @@ Skip model synthesis even when a model is configured:
 uv run assistant ask "What did I decide about search?" --no-model
 ```
 
+Research a question using local notes first, with optional remote escalation when configured:
+
+```bash
+uv run assistant research "best architecture for local-first AI assistants"
+```
+
+Force local-only research or force a configured remote model after local retrieval:
+
+```bash
+uv run assistant research "best architecture for local-first AI assistants" --no-remote
+uv run assistant research "best architecture for local-first AI assistants" --force-remote --limit 8
+```
+
 Show a read-only terminal dashboard for stored notes, recent runs, the latest LLM request summary, and LLM usage:
 
 ```bash
@@ -99,11 +112,17 @@ Environment variables:
 - `ASSISTANT_REGISTRY_PATH`: tool registry path, defaults to `./tools/registry.yaml`
 - `ASSISTANT_DEBUG_LOG_PATH`: debug log file path, defaults to `~/.local/share/local-assistant/debug.log`
 - `ASSISTANT_LLM_SUMMARY_PATH`: saved last LLM request summary path, defaults to `last-llm-request.md` under `ASSISTANT_HOME`
+- `ASSISTANT_RESEARCH_DIR`: stored research markdown directory, defaults to `research` under `ASSISTANT_NOTES_DIR`
 - `ASSISTANT_HOME`: base directory for default local state
 - `ASSISTANT_LLAMA_MODEL_PATH`: optional path to a local GGUF model for `assistant ask`
 - `ASSISTANT_LLAMA_CONTEXT_SIZE`: llama.cpp context window, defaults to `4096`
 - `ASSISTANT_LLAMA_MAX_TOKENS`: max generated answer tokens, defaults to `256`
 - `ASSISTANT_LLAMA_TEMPERATURE`: generation temperature, defaults to `0.2`
+- `ASSISTANT_REMOTE_PROVIDER`: optional remote provider, currently `openai-compatible`
+- `ASSISTANT_REMOTE_MODEL`: optional remote model for `assistant research`
+- `ASSISTANT_REMOTE_API_KEY`: optional remote provider API key
+- `ASSISTANT_REMOTE_BASE_URL`: OpenAI-compatible API base URL, defaults to `https://api.openai.com/v1`
+- `ASSISTANT_REMOTE_TIMEOUT`: remote request timeout in seconds, defaults to `30`
 
 ## Data
 

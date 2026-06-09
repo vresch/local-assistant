@@ -20,6 +20,11 @@ def log_event(conn: sqlite3.Connection, run_id: int, event_type: str, message: s
     conn.commit()
 
 
+def update_run_route(conn: sqlite3.Connection, run_id: int, route: str) -> None:
+    conn.execute("UPDATE runs SET route = ? WHERE id = ?", (route, run_id))
+    conn.commit()
+
+
 def finish_run(conn: sqlite3.Connection, run_id: int, status: str, summary: str) -> None:
     conn.execute(
         """
