@@ -24,7 +24,7 @@ The assistant should:
 - Use Typer for CLI.
 - Prefer boring, testable code.
 - Add tests for core indexing/search behavior.
-- Do not implement remote LLM support yet unless explicitly requested.
+- Keep the Phase 1 core usable without remote LLM support. Existing remote research support is optional and must remain disabled unless configured; do not expand remote behavior unless explicitly requested.
 
 ## Target structure
 

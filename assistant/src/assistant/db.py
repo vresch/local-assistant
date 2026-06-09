@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 
-type TableCounts = dict[str, int]
+TableCounts = dict[str, int]
 
 
 def connect(db_path: Path) -> sqlite3.Connection:

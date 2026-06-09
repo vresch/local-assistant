@@ -181,7 +181,9 @@ Handles:
 
 Handles model clients.
 
-Initial providers:
+Provider support is optional. The Phase 1 core must work without any configured model provider.
+
+Initial optional providers:
 
 * Local LLM via `llama.cpp` server
 * Optional `llama-cpp-python`
@@ -415,7 +417,7 @@ Retrieval behavior:
 3. Retrieve the top ranked chunks, ordered by FTS rank.
 4. Include document path, heading, chunk index, and snippet for each source.
 5. Do not use vector search in Phase 1.
-6. Do not call a remote model in Phase 1.
+6. Do not call a remote model from `assistant ask`.
 
 Synthesis behavior:
 
@@ -542,7 +544,7 @@ tools:
 
 ## 6.4 `assistant research`
 
-Use remote LLMs selectively for deeper tasks.
+Optional extension: use remote LLMs selectively for deeper tasks.
 
 Example:
 
@@ -748,7 +750,7 @@ Capabilities:
 * Execute registered Python tools through `uv`
 * Log all actions
 
-## Should Have
+## Optional Extension
 
 ```bash
 assistant research "..."
@@ -756,7 +758,7 @@ assistant research "..."
 
 Capabilities:
 
-* Escalate to remote model manually or by simple routing rule
+* Escalate to a configured remote model manually or by simple routing rule
 * Store research summaries locally
 
 ## Should Not Have Yet

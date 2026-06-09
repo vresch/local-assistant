@@ -2,7 +2,11 @@
 
 Phase 1 MVP for a CLI-first, local-first personal AI assistant.
 
+The core Phase 1 path is fully local: index Markdown notes, search them with SQLite FTS5, answer from retrieved notes, run registered Python tools through `uv`, and log actions locally. Optional model-backed commands are available, but the assistant works without a configured model or remote provider.
+
 ## Install
+
+Requires Python 3.10 or newer.
 
 ```bash
 uv sync
@@ -35,7 +39,7 @@ Search indexed notes:
 uv run assistant search "project alpha"
 ```
 
-Ask a question using retrieved notes. If `ASSISTANT_LLAMA_MODEL_PATH` points to a local GGUF model,
+Ask a question using retrieved notes only. If `ASSISTANT_LLAMA_MODEL_PATH` points to a local GGUF model,
 the answer is synthesized with llama.cpp; otherwise it falls back to an extractive answer:
 
 ```bash
@@ -48,7 +52,7 @@ Skip model synthesis even when a model is configured:
 uv run assistant ask "What did I decide about search?" --no-model
 ```
 
-Research a question using local notes first, with optional remote escalation when configured:
+Optional extension: research a question using local notes first, with optional remote escalation when configured:
 
 ```bash
 uv run assistant research "best architecture for local-first AI assistants"
