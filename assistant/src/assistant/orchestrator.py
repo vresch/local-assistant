@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from importlib import import_module
@@ -194,8 +195,29 @@ def _clean_generated_answer(text: str) -> str:
 
 
 def _extractive_answer(results: list[SearchResult]) -> str:
-    top_excerpt = _plain_excerpt(results[0].content, max_chars=220)
-    return f"The strongest matching note says: {top_excerpt}"
+    top_excerpt = _source_excerpt(results[0])
+    if len(results) == 1:
+        return f"The strongest matching note says: {top_excerpt}"
+
+    lines = [
+        f"The strongest matching note says: {top_excerpt}",
+        "",
+        "Other matching notes suggest:",
+    ]
+    seen = {top_excerpt.lower()}
+    appended = False
+    for result in results[1:]:
+        excerpt = _source_excerpt(result)
+        normalized = excerpt.lower()
+        if not excerpt or normalized in seen:
+            continue
+        seen.add(normalized)
+        appended = True
+        lines.append(f"- {excerpt}")
+
+    if not appended:
+        return lines[0]
+    return "\n".join(lines)
 
 
 def _source_reference(result: SearchResult) -> str:
@@ -211,3 +233,21 @@ def _plain_excerpt(text: str, max_chars: int = 320) -> str:
     if len(compact) <= max_chars:
         return compact
     return compact[: max_chars - 3].rstrip() + "..."
+
+
+def _source_excerpt(result: SearchResult, max_chars: int = 220) -> str:
+    text = _strip_leading_heading(result.content)
+    excerpt = _plain_excerpt(text, max_chars=max_chars)
+    if result.heading:
+        heading = result.heading.strip()
+        if excerpt and not excerpt.lower().startswith(heading.lower()):
+            return f"{heading}: {excerpt}"
+    return excerpt
+
+
+def _strip_leading_heading(text: str) -> str:
+    lines = text.splitlines()
+    if lines and re.match(r"^#{1,6}\s+", lines[0]):
+        lines = lines[1:]
+    stripped = "\n".join(lines).strip()
+    return stripped or text.strip()

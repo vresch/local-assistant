@@ -84,3 +84,37 @@ def test_answer_question_skips_llama_without_model_path(tmp_path: Path) -> None:
     assert answer.local_model is None
     assert "The strongest matching note says" in answer.answer
     assert "The strongest matching note says" in answer.text
+
+
+def test_answer_question_synthesizes_multiple_business_ideas_without_model(tmp_path: Path) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "business" / "sontera.md").parent.mkdir(parents=True)
+    (notes_dir / "business" / "sontera.md").write_text(
+        "# Sontera\nI am pursuing a sound healing business called Sontera.",
+        encoding="utf-8",
+    )
+    (notes_dir / "ideas" / "newsletter.md").parent.mkdir(parents=True)
+    (notes_dir / "ideas" / "newsletter.md").write_text(
+        "# Newsletter\nI am pursuing a paid newsletter business about local productivity systems.",
+        encoding="utf-8",
+    )
+    (notes_dir / "studio.md").write_text(
+        "# Studio\nI am pursuing a small design studio business for local companies.",
+        encoding="utf-8",
+    )
+
+    with connect(tmp_path / "assistant.db") as conn:
+        index_notes(conn, notes_dir)
+        answer = answer_question(conn, "What business ideas am I currently pursuing?", use_model=False)
+
+    assert len(answer.results) >= 3
+    assert answer.used_local_model is False
+    assert "The strongest matching note says" in answer.answer
+    assert "Sontera" in answer.answer
+    assert "Newsletter" in answer.answer
+    assert "Studio" in answer.answer
+    assert "sound healing business" in answer.answer.lower()
+    assert "paid newsletter business" in answer.answer.lower()
+    assert "design studio business" in answer.answer.lower()
+    assert "podcast" not in answer.answer.lower()
