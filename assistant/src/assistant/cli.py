@@ -17,6 +17,7 @@ from assistant.notes.search import search_notes
 from assistant.orchestrator import answer_question
 from assistant.tools.registry import load_registry
 from assistant.tools.runner import run_tool
+from assistant.ui import run_ui
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -164,6 +165,15 @@ def dashboard(limit: int = 10) -> None:
         _print_recent_runs(conn, limit=limit)
         _print_last_llm_summary(conn)
         _print_llm_events(conn, limit=limit)
+
+
+@app.command()
+def ui() -> None:
+    """Open the Textual database browser."""
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=ui db_path=%s", settings.db_path)
+    run_ui(settings)
 
 
 @app.command("save-llm-summary")

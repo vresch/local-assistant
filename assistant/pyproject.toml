@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.13.4",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
+    "textual>=8.2.7",
     "typer>=0.26.7",
 ]
 
