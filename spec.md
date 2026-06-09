@@ -138,7 +138,10 @@ assistant ask "..."
 assistant search "..."
 assistant run "..."
 assistant research "..."
+assistant ui
 ```
+
+The `assistant ui` command opens a read-only terminal UI built with `Textual` for browsing local assistant data.
 
 ### Orchestrator
 
@@ -566,6 +569,18 @@ Log run
 ```
 
 Remote models should be used only when the local system cannot reasonably answer.
+
+---
+
+## 6.5 `assistant ui`
+
+Open a local terminal UI for inspecting stored notes, recent runs, and related local assistant state.
+
+Implementation note:
+
+* Use `Textual` for the terminal interface.
+* Keep the UI read-only in Phase 1.
+* The UI should remain local-only and should not require network access.
 
 ---
 

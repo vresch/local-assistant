@@ -105,6 +105,62 @@ def fetch_runs(conn: sqlite3.Connection, filter_text: str = "", limit: int = DEF
     )
 
 
+def fetch_ask_runs(conn: sqlite3.Connection, filter_text: str = "", limit: int = DEFAULT_LIMIT) -> TableView:
+    rows = conn.execute(
+        """
+        SELECT id, input, status, summary, started_at, finished_at
+        FROM runs
+        WHERE
+            command = 'ask'
+            AND (
+                lower(coalesce(input, '')) LIKE lower(?)
+                OR lower(coalesce(summary, '')) LIKE lower(?)
+                OR EXISTS (
+                    SELECT 1
+                    FROM run_events
+                    WHERE run_events.run_id = runs.id
+                    AND (
+                        lower(run_events.event_type) LIKE lower(?)
+                        OR lower(run_events.message) LIKE lower(?)
+                    )
+                )
+            )
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (_like(filter_text), _like(filter_text), _like(filter_text), _like(filter_text), limit),
+    ).fetchall()
+
+    rendered_rows: list[tuple[Any, ...]] = []
+    for row in rows:
+        events = conn.execute(
+            """
+            SELECT event_type, message
+            FROM run_events
+            WHERE run_id = ?
+            ORDER BY id
+            """,
+            (row["id"],),
+        ).fetchall()
+        event_messages = {event["event_type"]: event["message"] for event in events}
+        rendered_rows.append(
+            (
+                row["id"],
+                row["input"] or "",
+                _ask_decision_output(event_messages),
+                event_messages.get("answer", row["summary"] or ""),
+                row["status"],
+                row["started_at"],
+                row["finished_at"] or "",
+            )
+        )
+
+    return TableView(
+        columns=("ID", "Question", "Decision Output", "Answer", "Status", "Started", "Finished"),
+        rows=tuple(rendered_rows),
+    )
+
+
 def fetch_events(conn: sqlite3.Connection, filter_text: str = "", limit: int = DEFAULT_LIMIT) -> TableView:
     rows = conn.execute(
         """
@@ -200,6 +256,7 @@ class AssistantUi(App[None]):
         with TabbedContent(id="database-tabs"):
             yield from self._tab("Documents", "documents", "Path filter")
             yield from self._tab("Chunks", "chunks", "Path, heading, or content filter")
+            yield from self._tab("Ask", "ask", "Question, decision output, or answer filter")
             yield from self._tab("Runs", "runs", "Command, status, route, input, or summary filter")
             yield from self._tab("Events", "events", "Command, event type, or message filter")
         yield Footer()
@@ -226,6 +283,7 @@ class AssistantUi(App[None]):
             return
         self._refresh_table("documents", fetch_documents)
         self._refresh_table("chunks", fetch_chunks)
+        self._refresh_table("ask", fetch_ask_runs)
         self._refresh_table("runs", fetch_runs)
         self._refresh_table("events", fetch_events)
 
@@ -266,3 +324,17 @@ def run_ui(settings: Settings) -> None:
 
 def _like(value: str) -> str:
     return f"%{value.strip()}%"
+
+
+def _ask_decision_output(event_messages: dict[str, str]) -> str:
+    parts = [
+        ("normalized_query", event_messages.get("normalized_query", "")),
+        ("retrieved_sources", event_messages.get("retrieved_sources", "")),
+        ("llm", event_messages.get("llm", "")),
+        ("synthesis", event_messages.get("synthesis", "")),
+        ("answer_summary", event_messages.get("answer_summary", "")),
+    ]
+    cleaned_parts = [f"{label}={value}" for label, value in parts if value]
+    if cleaned_parts:
+        return " | ".join(cleaned_parts)
+    return event_messages.get("answer", "") or event_messages.get("answer_summary", "") or ""
