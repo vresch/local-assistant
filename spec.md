@@ -1,20 +1,10 @@
-# Local-First Personal AI Assistant — Specification
+# Local-First Personal AI Assistant Specification
 
-## 1. Summary
+## 1. Purpose
 
-The goal is to build a local-first personal AI assistant controlled through a CLI.
+Build a CLI-first personal AI assistant that uses local notes, local tools, and local logs as its core system.
 
-The assistant should use the user’s local knowledge base, local tools, and local execution environment as its core system. Remote LLMs may be used selectively for deeper reasoning, research, or complex tasks, but they should not own memory, orchestration, or execution.
-
-The assistant is not just a chat interface. It is a personal operating layer over:
-
-* Notes
-* Tools
-* Scripts
-* Local models
-* Remote models
-* Logs
-* User workflows
+Remote LLMs may be used selectively for deeper reasoning, research, or complex tasks, but they must not own memory, orchestration, execution, or default behavior.
 
 Core philosophy:
 
@@ -23,38 +13,92 @@ Local system owns context.
 Remote models rent intelligence.
 ```
 
----
+The assistant is a personal operating layer over:
 
-# 2. Goals
+* Markdown notes
+* Python tools and scripts
+* SQLite search
+* Local and optional remote model providers
+* Local logs
+* User workflows
 
-## Primary Goals
+## 2. Phase 1 Contract
 
-Build a CLI-first assistant that can:
+Phase 1 builds the boring, inspectable local core.
 
-1. Search and summarize local notes.
-2. Answer questions using local knowledge.
-3. Execute local Python tools through `uv`.
-4. Route tasks between local logic, local LLMs, and remote LLMs.
-5. Log all actions and decisions.
-6. Remain simple, inspectable, and extensible.
+### Must Have
 
-## Non-Goals for Phase 1
+Commands:
 
-The first version should avoid:
+```bash
+assistant index
+assistant search "query"
+assistant ask "question"
+assistant run <tool>
+```
+
+Capabilities:
+
+* Index Markdown notes from `~/notes`.
+* Store searchable chunks in SQLite + FTS5.
+* Search notes with source paths and snippets.
+* Answer questions from retrieved local notes.
+* Execute registered Python tools through `uv`.
+* Log all commands locally.
+* Work without configured remote LLM support.
+
+Tests:
+
+* Core Markdown chunking behavior.
+* SQLite/FTS search behavior.
+* Indexing behavior.
+* Tool lookup and command execution boundaries where practical.
+
+### Optional In Phase 1
+
+Commands:
+
+```bash
+assistant research "query"
+assistant ui
+assistant status
+```
+
+Optional behavior must remain local-first:
+
+* `assistant research` may use remote LLMs only when explicitly configured.
+* `assistant ui` should be read-only if included.
+* `assistant status` should only inspect or update local roadmap state.
+
+### Out Of Scope For Phase 1
+
+Avoid:
 
 * Autonomous long-running agents
 * Multi-agent frameworks
 * Background workers
 * Complex planning frameworks
-* Premature vector databases
-* Heavy orchestration abstractions
-* Full task-management systems
+* Vector databases
+* Web UI
+* Fine-tuning
+* Remote behavior enabled by default
 
----
+### MVP Definition
 
-# 3. System Principles
+The MVP is complete when this works:
 
-## 3.1 Local-First
+```bash
+assistant index
+assistant search "sound healing"
+assistant ask "What do my notes say about sound healing?"
+assistant run example-tool
+```
+
+Every command must write a local log entry.
+
+## 3. Design Principles
+
+### Local-First
 
 All important state should live locally:
 
@@ -68,23 +112,21 @@ All important state should live locally:
 
 Remote APIs are optional external workers.
 
-## 3.2 Notes as Primary Memory
+### Notes As Primary Memory
 
-The user’s long-term memory is the local Markdown notes directory:
+The user's long-term memory is the local Markdown notes directory:
 
 ```bash
 ~/notes
 ```
 
-These notes originate from Evernote exports and are accessed through Logseq.
+These notes originate from Evernote exports and are accessed through Logseq. The assistant should treat this repository as the primary knowledge source.
 
-The assistant should treat this repository as the primary knowledge source.
+### Python As Action Layer
 
-## 3.3 Python as Action Layer
+Local actions should be delegated to Python scripts managed by `uv`.
 
-Instead of building many custom tools early, local actions should be delegated to Python scripts managed by `uv`.
-
-Example:
+Examples:
 
 ```bash
 assistant run analyze-expenses
@@ -98,11 +140,9 @@ Internally:
 uv run ...
 ```
 
-## 3.4 Assistant-First Design
+### Assistant-First Design
 
-The assistant is the product.
-
-LLMs are reasoning engines used by the assistant, not the foundation of the system.
+The assistant is the product. LLMs are reasoning engines used by the assistant, not the foundation of the system.
 
 The core value comes from:
 
@@ -110,153 +150,57 @@ The core value comes from:
 Knowledge + Execution + Routing
 ```
 
----
+## 4. Architecture
 
-# 4. Initial Architecture
+Target package shape:
 
 ```text
 assistant/
-├─ cli/
-├─ orchestrator/
-├─ notes/
-├─ providers/
-├─ tools/
-├─ logs/
-└─ config/
+  cli.py
+  config.py
+  db.py
+  orchestrator.py
+  notes/
+    chunker.py
+    indexer.py
+    search.py
+  providers/
+    remote.py
+  tools/
+    registry.py
+    runner.py
+  logs/
+    logger.py
+  ui.py
 ```
 
-## 4.1 Components
+### Component Boundaries
 
-### CLI
-
-Primary user interface.
-
-Required commands:
-
-```bash
-assistant ask "..."
-assistant search "..."
-assistant run "..."
-assistant research "..."
-assistant ui
-```
-
-The `assistant ui` command opens a read-only terminal UI built with `Textual` for browsing local assistant data.
-
-### Orchestrator
-
-Decides how to handle a user request.
-
-Responsibilities:
-
-* Parse intent
-* Retrieve relevant notes
-* Decide whether local context is enough
-* Decide whether to use a local model
-* Decide whether to escalate to a remote model
-* Decide whether to execute a tool
-* Ask for approval when needed
-* Record decisions in logs
-
-The orchestrator should not implement:
-
-* Model inference
-* Note indexing internals
-* Tool logic
-* Storage internals
-
-### Notes Module
-
-Handles:
-
-* Markdown discovery
-* Parsing
-* Chunking
-* SQLite storage
-* FTS5 indexing
-* Search
-* Source references
-
-### Providers Module
-
-Handles model clients.
+| Component | Owns | Must Not Own |
+| --- | --- | --- |
+| CLI | Typer commands, option parsing, user-facing output | Storage internals, model inference |
+| Orchestrator | Routing, approval decisions, high-level flow | Note indexing internals, tool implementation |
+| Notes | Markdown discovery, parsing, chunking, SQLite/FTS storage, search | Model calls, tool execution |
+| Providers | Local/remote model clients behind a small interface | Memory, routing, storage |
+| Tools | Tool registry, validation, `uv` execution | Search, model calls |
+| Logs | Run records and run events | Business logic |
+| Config | Paths, provider settings, registry paths, logging preferences | Runtime decisions |
 
 Provider support is optional. The Phase 1 core must work without any configured model provider.
 
-Initial optional providers:
+## 5. Data Storage
 
-* Local LLM via `llama.cpp` server
-* Optional `llama-cpp-python`
-* Remote LLM provider
+Use SQLite + FTS5 for Phase 1. Avoid vector databases.
 
-### Tools Module
+Reasons:
 
-Handles local executable tools.
-
-Initial strategy:
-
-```bash
-uv run <tool>
-```
-
-Each tool should have metadata:
-
-* Name
-* Description
-* Input schema, if needed
-* Command
-* Risk level
-* Approval requirement
-
-### Logs Module
-
-Records:
-
-* User input
-* Retrieved notes
-* Routing decision
-* Model used
-* Tool executed
-* Tool output
-* Final response
-* Errors
-
-### Config Module
-
-Stores:
-
-* Notes path
-* SQLite path
-* Provider settings
-* Model routing settings
-* Tool registry path
-* Logging preferences
-
----
-
-# 5. Data Storage
-
-## 5.1 Notes Index
-
-Use:
-
-```text
-SQLite + FTS5
-```
-
-Avoid vector databases in Phase 1.
-
-Reason:
-
-* Simpler
+* Simple
 * Local
 * Transparent
 * Fast enough for Markdown notes
 * Easy to debug
 
-## 5.2 Suggested Tables
-
-### documents
+### Core Tables
 
 ```sql
 CREATE TABLE documents (
@@ -266,11 +210,7 @@ CREATE TABLE documents (
   modified_at TEXT,
   content_hash TEXT
 );
-```
 
-### chunks
-
-```sql
 CREATE TABLE chunks (
   id INTEGER PRIMARY KEY,
   document_id INTEGER NOT NULL,
@@ -279,11 +219,7 @@ CREATE TABLE chunks (
   heading TEXT,
   FOREIGN KEY(document_id) REFERENCES documents(id)
 );
-```
 
-### chunks_fts
-
-```sql
 CREATE VIRTUAL TABLE chunks_fts USING fts5(
   content,
   heading,
@@ -292,7 +228,7 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(
 );
 ```
 
-### runs
+### Logging Tables
 
 ```sql
 CREATE TABLE runs (
@@ -305,11 +241,7 @@ CREATE TABLE runs (
   status TEXT,
   summary TEXT
 );
-```
 
-### run_events
-
-```sql
 CREATE TABLE run_events (
   id INTEGER PRIMARY KEY,
   run_id INTEGER NOT NULL,
@@ -320,11 +252,46 @@ CREATE TABLE run_events (
 );
 ```
 
----
+### Optional Roadmap Table
 
-# 6. CLI Commands
+Use only if roadmap/status tracking is implemented in the app instead of a checked-in file.
 
-## 6.1 `assistant search`
+```sql
+CREATE TABLE roadmap_items (
+  id INTEGER PRIMARY KEY,
+  phase TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL,
+  priority INTEGER NOT NULL,
+  summary TEXT,
+  started_at TEXT,
+  completed_at TEXT,
+  updated_at TEXT NOT NULL
+);
+```
+
+## 6. CLI Commands
+
+### `assistant index`
+
+Index Markdown notes from the configured notes directory.
+
+Behavior:
+
+1. Discover Markdown files under `notes_path`.
+2. Parse each note.
+3. Split content into chunks.
+4. Store document and chunk metadata.
+5. Populate SQLite FTS5.
+6. Log indexed, skipped, changed, and failed files.
+
+Success criteria:
+
+* Re-running index is safe.
+* Changed files are reflected in search.
+* Source paths remain stable and inspectable.
+
+### `assistant search`
 
 Search local notes.
 
@@ -336,67 +303,25 @@ assistant search "sound healing"
 
 Behavior:
 
-1. Search SQLite FTS index.
-2. Return matching chunks.
-3. Include source file paths.
-4. Include headings when available.
+1. Search SQLite FTS5 against chunk content and headings.
+2. Return matching chunks ordered by rank.
+3. Include source file path, heading when available, chunk index, and snippet.
+4. Log the query and result count.
 
-Output:
+Output shape:
 
 ```text
 Found 7 results:
 
 1. ~/notes/sound-healing/session-structure.md
    Heading: Body Scan
-   Snippet: ...
-
-2. ~/notes/business/sontera.md
-   Heading: Offers
+   Chunk: 3
    Snippet: ...
 ```
 
----
+### `assistant ask`
 
-## 6.2 `assistant ask`
-
-Ask a question using local notes and optional local model reasoning.
-
-Example:
-
-```bash
-assistant ask "What do my notes say about sound healing?"
-```
-
-Purpose:
-
-`assistant ask` turns a natural-language question into a grounded answer using the local notes index. It should behave like a retrieval-based question answering command, not a general chatbot.
-
-Flow:
-
-```text
-User input
-↓
-Normalize question
-↓
-Search SQLite FTS5 notes index
-↓
-Retrieve top matching chunks
-↓
-Build grounded context from chunks
-↓
-Local synthesis
-↓
-Answer with sources
-↓
-Log run
-```
-
-Expected answer style:
-
-* Direct answer
-* Supporting notes
-* Source references
-* Optional next action
+Answer a question using local notes and optional local model synthesis.
 
 Command shape:
 
@@ -404,29 +329,28 @@ Command shape:
 assistant ask "QUESTION" [--limit N] [--no-model]
 ```
 
-Arguments and options:
+Behavior:
 
-* `QUESTION`: Required natural-language question.
-* `--limit N`: Optional maximum number of chunks to retrieve. Default: `5`.
-* `--no-model`: Optional flag to disable local model synthesis and use deterministic extractive synthesis.
+1. Normalize the question.
+2. Search SQLite FTS5.
+3. Retrieve the top matching chunks.
+4. Build grounded context from retrieved chunks.
+5. Produce an answer with sources.
+6. Log the run.
 
-Retrieval behavior:
+Retrieval rules:
 
-1. Use the existing SQLite FTS5 index.
-2. Search against chunk content and headings.
-3. Retrieve the top ranked chunks, ordered by FTS rank.
-4. Include document path, heading, chunk index, and snippet for each source.
-5. Do not use vector search in Phase 1.
-6. Do not call a remote model from `assistant ask`.
+* Use SQLite FTS5 only in Phase 1.
+* Include document path, heading, chunk index, and snippet for each source.
+* Do not call a remote model from `assistant ask`.
 
-Synthesis behavior:
+Synthesis rules:
 
-1. The answer must be grounded only in retrieved chunks.
-2. If a local model provider is configured, pass the question and retrieved chunks into a simple prompt template.
-3. If no local model provider is configured, produce an extractive answer from the strongest matching chunks.
-4. If the retrieved chunks do not contain enough evidence, say so directly.
-5. Do not invent facts, sources, or user preferences.
-6. Prefer concise answers over broad summaries.
+* Answer only from retrieved chunks.
+* If a local model provider is configured, pass the question and chunks into a simple prompt.
+* If no local model provider is configured, produce an extractive answer from the strongest chunks.
+* If evidence is insufficient, say so directly.
+* Do not invent facts, sources, or user preferences.
 
 Prompt contract for optional local model:
 
@@ -446,7 +370,7 @@ Local notes:
 {retrieved_chunks}
 ```
 
-Output format:
+Output shape:
 
 ```text
 Answer:
@@ -454,19 +378,12 @@ Answer:
 
 Supporting notes:
 - ...
-- ...
 
 Sources:
 1. ~/notes/path/to/file.md - Heading - chunk 3
-2. ~/notes/another-file.md - chunk 1
-
-Next action:
-...
 ```
 
-Empty-result behavior:
-
-If no relevant chunks are found, return:
+Empty-result output:
 
 ```text
 Answer:
@@ -479,29 +396,7 @@ Next action:
 Try rephrasing the question or run `assistant index` if your notes changed.
 ```
 
-Logging requirements:
-
-Each `assistant ask` run must log:
-
-* Original question
-* Normalized query
-* Route: `local_answer`
-* Retrieved source references
-* Whether local model synthesis was used
-* Final answer summary
-* Errors, if any
-
-Success criteria:
-
-* Answers are based on local notes only.
-* Sources are always shown when chunks are used.
-* Unsupported questions produce an explicit insufficient-context response.
-* The command works without a configured model.
-* The command writes a local run log.
-
----
-
-## 6.3 `assistant run`
+### `assistant run`
 
 Execute a registered local tool.
 
@@ -511,25 +406,16 @@ Example:
 assistant run revenue-report
 ```
 
-Flow:
+Behavior:
 
-```text
-User input
-↓
-Lookup tool
-↓
-Check approval requirement
-↓
-Execute uv command
-↓
-Capture stdout/stderr
-↓
-Return result
-↓
-Log run
-```
+1. Look up the tool in the registry.
+2. Validate arguments if a schema exists.
+3. Check risk and approval requirements.
+4. Execute the configured command through `uv`.
+5. Capture stdout, stderr, exit code, and artifacts where available.
+6. Log the run and result.
 
-Example tool registry entry:
+Example registry entry:
 
 ```yaml
 tools:
@@ -538,165 +424,6 @@ tools:
     command: "uv run python tools/revenue_report.py"
     requires_approval: false
     risk: low
-```
-
----
-
-## 6.4 `assistant research`
-
-Optional extension: use remote LLMs selectively for deeper tasks.
-
-Example:
-
-```bash
-assistant research "best architecture for local-first AI agents"
-```
-
-Flow:
-
-```text
-User input
-↓
-Search local notes
-↓
-Decide whether remote research is justified
-↓
-Call remote model
-↓
-Local synthesis
-↓
-Store summary
-↓
-Log run
-```
-
-Remote models should be used only when the local system cannot reasonably answer.
-
----
-
-## 6.5 `assistant ui`
-
-Open a local terminal UI for inspecting stored notes, recent runs, and related local assistant state.
-
-Implementation note:
-
-* Use `Textual` for the terminal interface.
-* Keep the UI read-only in Phase 1.
-* The UI should remain local-only and should not require network access.
-
----
-
-# 7. Routing Logic
-
-The orchestrator should classify each request.
-
-## 7.1 Route Types
-
-```text
-local_search
-local_answer
-local_tool
-local_llm
-remote_llm
-approval_required
-clarification_required
-```
-
-## 7.2 Simple Routing Rules
-
-| User Intent                  | Default Route            |
-| ---------------------------- | ------------------------ |
-| Search notes                 | `local_search`           |
-| Ask about personal knowledge | `local_answer`           |
-| Execute known command        | `local_tool`             |
-| Summarize retrieved notes    | `local_llm`              |
-| Deep research                | `remote_llm`             |
-| External/current information | `remote_llm`             |
-| Destructive local action     | `approval_required`      |
-| Ambiguous request            | `clarification_required` |
-
-## 7.3 Escalation Rules
-
-Use a remote model only when:
-
-* The task requires deep synthesis
-* The local model is insufficient
-* The task needs web-scale knowledge
-* The task is complex coding or architecture work
-* The value justifies the cost
-
-Do not use remote models for:
-
-* Basic note search
-* Simple summaries
-* Local task lookup
-* Simple command execution
-* Routine status questions
-
----
-
-# 8. Local Model Strategy
-
-## Recommended Default
-
-Use:
-
-```text
-llama.cpp server
-```
-
-Reasons:
-
-* Lightweight
-* Efficient
-* Infrastructure-friendly
-* OpenAI-compatible API
-* Easy to swap providers
-
-## Alternative
-
-Use:
-
-```text
-llama-cpp-python
-```
-
-Useful when:
-
-* Python integration becomes central
-* You want tighter control inside the Python app
-* You prefer a single-process architecture
-
-## Suggested Provider Interface
-
-```python
-class ModelProvider:
-    def complete(self, messages: list[dict], **kwargs) -> str:
-        ...
-```
-
----
-
-# 9. Tool Execution Strategy
-
-Use Python scripts as the universal action interface.
-
-Tool execution should be explicit and logged.
-
-Example structure:
-
-```text
-tools/
-├─ analyze_expenses.py
-├─ transcribe_audio.py
-├─ generate_report.py
-└─ registry.yaml
-```
-
-Example command:
-
-```bash
-uv run python tools/analyze_expenses.py
 ```
 
 Tools should return structured output where possible:
@@ -709,9 +436,126 @@ Tools should return structured output where possible:
 }
 ```
 
----
+### `assistant research`
 
-# 10. Logging and Observability
+Optional extension for deeper tasks using remote LLMs.
+
+Example:
+
+```bash
+assistant research "best architecture for local-first AI assistants"
+```
+
+Rules:
+
+* Use local context first.
+* Use remote LLMs only when explicitly configured.
+* Store research summaries locally.
+* Log the route, model, sources, and summary.
+
+### `assistant ui`
+
+Optional local terminal UI for inspecting stored notes, recent runs, and assistant state.
+
+Rules:
+
+* Use `Textual`.
+* Keep it read-only in Phase 1.
+* Do not require network access.
+
+### `assistant status`
+
+Optional local roadmap control command.
+
+Examples:
+
+```bash
+assistant status
+assistant status phase-1
+assistant status set phase-2 active
+assistant status set phase-4 planned
+```
+
+Rules:
+
+* Read roadmap items from local storage or a checked-in roadmap file.
+* Show phases in priority order.
+* Allow explicit status changes.
+* Log status changes as local events.
+* Do not trigger model calls, remote research, tool execution, or automatic planning.
+
+## 7. Routing
+
+The orchestrator classifies user requests into simple routes.
+
+### Route Types
+
+```text
+local_search
+local_answer
+local_tool
+local_llm
+remote_llm
+approval_required
+clarification_required
+```
+
+### Default Rules
+
+| User Intent | Default Route |
+| --- | --- |
+| Search notes | `local_search` |
+| Ask about personal knowledge | `local_answer` |
+| Execute known command | `local_tool` |
+| Summarize retrieved notes | `local_llm` |
+| Deep research | `remote_llm` |
+| External/current information | `remote_llm` |
+| Destructive local action | `approval_required` |
+| Ambiguous request | `clarification_required` |
+
+### Remote Escalation Rules
+
+Use a remote model only when:
+
+* The task requires deep synthesis.
+* The local model is insufficient.
+* The task needs web-scale or current information.
+* The task is complex coding or architecture work.
+* The value justifies the cost.
+
+Do not use remote models for:
+
+* Basic note search.
+* Routine note answers.
+* Local task lookup.
+* Simple command execution.
+* Routine status questions.
+
+## 8. Providers
+
+Provider support is optional and must be disabled unless configured.
+
+Recommended local default:
+
+```text
+llama.cpp server
+```
+
+Alternative:
+
+```text
+llama-cpp-python
+```
+
+Suggested provider interface:
+
+```python
+class ModelProvider:
+    def complete(self, messages: list[dict], **kwargs) -> str:
+        ...
+```
+
+## 9. Logging And Observability
 
 Every command should create a run record.
 
@@ -727,213 +571,168 @@ Minimum logged data:
 * Errors
 * Final response summary
 
-This is important because the assistant should become debuggable and improvable over time.
+Logs make the assistant debuggable and improvable over time.
 
----
+## 10. Status Control
 
-# 11. Phase 1 Scope
+Status control tracks roadmap progress. It is optional for Phase 1 unless explicitly prioritized.
 
-## Must Have
-
-```bash
-assistant search "..."
-assistant ask "..."
-assistant run "..."
-```
-
-Capabilities:
-
-* Index `~/notes`
-* Search Markdown notes with SQLite FTS5
-* Retrieve chunks
-* Summarize retrieved context
-* Execute registered Python tools through `uv`
-* Log all actions
-
-## Optional Extension
-
-```bash
-assistant research "..."
-```
-
-Capabilities:
-
-* Escalate to a configured remote model manually or by simple routing rule
-* Store research summaries locally
-
-## Should Not Have Yet
-
-* Autonomous loops
-* Multi-agent execution
-* Background jobs
-* Complex planners
-* Vector DB
-* Web UI
-* Fine-tuning
-* Agent frameworks
-
----
-
-# 12. First Milestones
-
-## Milestone 1: Note Search
-
-Command:
-
-```bash
-assistant search "sound healing"
-```
-
-Success criteria:
-
-* Finds relevant Markdown files
-* Returns useful snippets
-* Shows source paths
-* Runs locally
-
-## Milestone 2: Local Answering
-
-Command:
-
-```bash
-assistant ask "What do my notes say about sound healing?"
-```
-
-Success criteria:
-
-* Searches notes
-* Retrieves relevant chunks
-* Produces concise answer
-* Includes sources
-
-## Milestone 3: Personal Priorities Query
-
-Command:
-
-```bash
-assistant ask "What business ideas am I currently pursuing?"
-```
-
-Success criteria:
-
-* Retrieves notes across different topics
-* Synthesizes them into a useful answer
-* Does not hallucinate unsupported ideas
-
-## Milestone 4: Tool Execution
-
-Command:
-
-```bash
-assistant run example-tool
-```
-
-Success criteria:
-
-* Looks up tool in registry
-* Runs via `uv`
-* Captures output
-* Logs execution
-
-## Milestone 5: Research Mode
-
-Command:
-
-```bash
-assistant research "best architecture for local-first AI assistants"
-```
-
-Success criteria:
-
-* Uses local context first
-* Escalates to remote model only when justified
-* Stores research result locally
-
----
-
-# 13. Recommended Implementation Order
-
-## Step 1: Project Skeleton
+Allowed statuses:
 
 ```text
-assistant/
-├─ cli/
-├─ notes/
-├─ orchestrator/
-├─ providers/
-├─ tools/
-├─ logs/
-└─ config/
+proposed
+planned
+active
+blocked
+done
+deferred
+cancelled
 ```
 
-## Step 2: SQLite FTS Indexer
+Status meanings:
 
-Build:
+* `proposed`: Captured as an idea, but not committed.
+* `planned`: Accepted into the roadmap.
+* `active`: Currently being worked on.
+* `blocked`: Cannot move forward without a decision, dependency, or external change.
+* `done`: Completed and accepted.
+* `deferred`: Intentionally postponed.
+* `cancelled`: Removed from the roadmap.
 
-```bash
-assistant index
-assistant search "..."
-```
+Transition rules:
 
-## Step 3: Ask Command
+* `proposed` may become `planned`, `deferred`, or `cancelled`.
+* `planned` may become `active`, `deferred`, or `cancelled`.
+* `active` may become `blocked`, `done`, or `deferred`.
+* `blocked` may become `active`, `deferred`, or `cancelled`.
+* `done` is terminal unless manually reopened.
+* `cancelled` is terminal unless manually restored.
 
-Build:
+## 11. Roadmap
 
-```bash
-assistant ask "..."
-```
+Recommended order:
 
-Use a simple prompt template over retrieved chunks.
+| Order | Phase | Initial Status | Outcome |
+| --- | --- | --- | --- |
+| 1 | Phase 1: Local Retrieval CLI | `active` | Build the local index/search/ask/run/log core. |
+| 2 | Phase 2: Better Local Knowledge Quality | `planned` | Improve retrieval quality and source usefulness. |
+| 3 | Phase 4: Tooling Layer | `planned` | Make local tool execution controlled and practical. |
+| 4 | Phase 5: Local LLM Support | `planned` | Add optional local generation after deterministic behavior works. |
+| 5 | Phase 3: Assistant Memory And Task State | `proposed` | Add lightweight local state across sessions. |
+| 6 | Phase 6: Note Workflows | `proposed` | Add practical note operations. |
+| 7 | Phase 7: Project-Aware Mode | `proposed` | Extend indexing/search to local project folders. |
+| 8 | Phase 8: TUI Or Minimal UI | `proposed` | Improve ergonomics after commands stabilize. |
+| 9 | Phase 9: Reliability And Packaging | `proposed` | Harden the assistant for regular local use. |
 
-## Step 4: Tool Registry
+Ordering rationale:
 
-Build:
+* Finish the local CLI core first.
+* Improve retrieval quality before adding broader behavior.
+* Make tool execution useful before model-dependent workflows.
+* Add local LLM support only after the non-LLM core works.
+* Add UI and packaging after the command model is proven.
 
-```bash
-assistant run <tool-name>
-```
+### Phase Details
 
-Use `uv run` commands from `tools/registry.yaml`.
+#### Phase 1: Local Retrieval CLI
 
-## Step 5: Provider Abstraction
+See the Phase 1 contract above.
 
-Add:
+#### Phase 2: Better Local Knowledge Quality
 
-* Local model provider
-* Remote model provider
+Possible work:
 
-## Step 6: Routing
+* Add richer chunk metadata: title, heading path, tags, modified time.
+* Improve ranking with FTS/BM25 tuning, exact-title matches, and optional recency boost.
+* Add search filters such as `--tag`, `--path`, `--since`, and `--limit`.
+* Reindex only changed files.
+* Show source citations consistently in `assistant ask`.
+* Add result inspection commands such as `assistant show <result-id>` or `assistant open <note>`.
 
-Start with simple rules.
+#### Phase 4: Tooling Layer
 
-Do not build a complex planner yet.
+Possible work:
 
-## Step 7: Logs
+* Define a tool manifest format.
+* Add tool arguments and validation.
+* Add dry-run mode.
+* Add tool permission categories: read-only, write, shell, network.
+* Improve `assistant run <tool> --arg value`.
+* Log structured tool results.
+* Add built-in tools for note creation, daily-note append, file search, and project inspection.
 
-Add persistent run logs early.
+#### Phase 5: Local LLM Support
 
-Logs will make the system easier to debug and improve.
+Possible work:
 
----
+* Add a stable model-provider adapter.
+* Support local providers such as Ollama, `llama.cpp` server, or MLX.
+* Configure the default local model in local config.
+* Keep deterministic fallback behavior when no model is configured.
+* Test prompt templates separately.
+* Keep `assistant search` and extractive `assistant ask` usable without a model.
 
-# 14. Minimal MVP Definition
+#### Phase 3: Assistant Memory And Task State
 
-The MVP is complete when this works:
+Possible work:
 
-```bash
-assistant index
-assistant search "sound healing"
-assistant ask "What do my notes say about sound healing?"
-assistant run example-tool
-```
+* Add local task/session history.
+* Add `assistant history`.
+* Add `assistant remember "fact"`.
+* Add `assistant forget <id>`.
+* Store local user preferences.
+* Add saved searches or pinned notes.
+* Keep assistant-generated memory separate from indexed user notes.
 
-And every command writes a local log entry.
+#### Phase 6: Note Workflows
 
----
+Possible work:
 
-# 15. Design Constraints
+* Add `assistant daily`.
+* Add `assistant capture "thought"`.
+* Add `assistant summarize path/to/note.md`.
+* Add backlinks and related-note discovery.
+* Detect duplicate or near-duplicate notes.
+* Support Markdown frontmatter.
 
-The system should be:
+#### Phase 7: Project-Aware Mode
+
+Possible work:
+
+* Add separate indexes for notes and projects.
+* Add `assistant project index`.
+* Add `assistant project search`.
+* Add configurable include/exclude globs.
+* Add code-aware chunking.
+* Extract README, spec, package, and dependency metadata.
+* Add `assistant ask --project "question"`.
+
+#### Phase 8: TUI Or Minimal UI
+
+Possible work:
+
+* Add interactive search results.
+* Add source previews.
+* Browse recent runs and logs.
+* Run approved tools from the UI.
+* Select retrieved sources for `assistant ask`.
+
+#### Phase 9: Reliability And Packaging
+
+Possible work:
+
+* Add installable CLI packaging.
+* Add config discovery and validation.
+* Add database migrations.
+* Add backup/export commands.
+* Handle index corruption and rebuilds.
+* Add logging retention.
+* Expand tests around indexing, search, tools, and logs.
+* Improve documentation.
+
+## 12. Design Constraints
+
+The system should remain:
 
 * Local-first
 * CLI-first
@@ -945,6 +744,4 @@ The system should be:
 * Log-driven
 * Easy to extend
 
-Avoid premature abstraction.
-
-The first working version should be boring, reliable, and easy to debug.
+Avoid premature abstraction. The first working version should be boring, reliable, and easy to debug.
