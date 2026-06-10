@@ -15,9 +15,21 @@ Use SQLite FTS5.
     )
 
     assert [chunk.heading for chunk in chunks] == [None, "Project Alpha", "Decisions"]
+    assert [chunk.heading_path for chunk in chunks] == [None, "Project Alpha", "Project Alpha > Decisions"]
     assert "Intro before heading" in chunks[0].content
     assert "# Project Alpha" in chunks[1].content
     assert "Use SQLite FTS5" in chunks[2].content
+
+
+def test_chunk_markdown_tracks_line_ranges_and_tokens() -> None:
+    chunks = chunk_markdown("# Alpha\nFirst line.\nSecond line.\n\n## Decision\nUse SQLite FTS5.")
+
+    assert chunks[0].start_line == 1
+    assert chunks[0].end_line == 3
+    assert chunks[0].token_count == 6
+    assert chunks[1].start_line == 5
+    assert chunks[1].end_line == 6
+    assert chunks[1].heading_path == "Alpha > Decision"
 
 
 def test_chunk_markdown_splits_large_sections() -> None:
@@ -25,4 +37,6 @@ def test_chunk_markdown_splits_large_sections() -> None:
 
     assert len(chunks) > 1
     assert all(chunk.heading == "Long" for chunk in chunks)
+    assert all(chunk.heading_path == "Long" for chunk in chunks)
+    assert all(chunk.start_line == 1 for chunk in chunks)
     assert all(len(chunk.content) <= 120 for chunk in chunks)

@@ -64,6 +64,25 @@ def initialize(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    _ensure_columns(
+        conn,
+        "documents",
+        {
+            "title": "TEXT",
+            "file_size": "INTEGER NOT NULL DEFAULT 0",
+            "tags_json": "TEXT NOT NULL DEFAULT '[]'",
+        },
+    )
+    _ensure_columns(
+        conn,
+        "chunks",
+        {
+            "heading_path": "TEXT",
+            "token_count": "INTEGER NOT NULL DEFAULT 0",
+            "start_line": "INTEGER NOT NULL DEFAULT 1",
+            "end_line": "INTEGER NOT NULL DEFAULT 1",
+        },
+    )
     conn.commit()
 
 
@@ -88,3 +107,10 @@ def cleanup_database(conn: sqlite3.Connection, include_logs: bool = False) -> Ta
 
 def _count(conn: sqlite3.Connection, table: str) -> int:
     return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+
+
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for name, definition in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")

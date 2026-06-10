@@ -38,12 +38,24 @@ Avoid remote LLM calls in phase one.
 
     index_result = runner.invoke(cli.app, ["index"], env=env)
     assert index_result.exit_code == 0
-    assert "scanned=1 indexed=1 skipped=0 chunks=2" in index_result.output
+    assert "scanned=1 new=1 updated=0 skipped=0 removed=0 failed=0 chunks=2" in index_result.output
 
-    search_result = runner.invoke(cli.app, ["search", "SQLite local"], env=env)
+    search_result = runner.invoke(cli.app, ["search", "SQLite local", "--limit", "1"], env=env)
     assert search_result.exit_code == 0
+    assert "Chunk" in search_result.output
+    assert "Score" in search_result.output
     assert "project.md" in search_result.output
     assert "Project Alpha" in search_result.output
+
+    with sqlite3.connect(db_path) as conn:
+        chunk_id = conn.execute("SELECT id FROM chunks ORDER BY id LIMIT 1").fetchone()[0]
+
+    show_result = runner.invoke(cli.app, ["show", str(chunk_id)], env=env)
+    assert show_result.exit_code == 0
+    assert "Chunk Metadata" in show_result.output
+    assert "chunk_id" in show_result.output
+    assert "Project Alpha" in show_result.output
+    assert "SQLite FTS5" in show_result.output
 
     ask_result = runner.invoke(cli.app, ["ask", "What search should phase one use?"], env=env)
     assert ask_result.exit_code == 0
@@ -61,7 +73,7 @@ Avoid remote LLM calls in phase one.
             """
             SELECT event_type, message
             FROM run_events
-            WHERE run_id = 3
+            WHERE run_id = 4
             ORDER BY id
             """
         ).fetchall()
@@ -74,11 +86,11 @@ Avoid remote LLM calls in phase one.
             """
         ).fetchall()
 
-    assert [run[0] for run in runs] == ["index", "search", "ask"]
-    assert [run[1] for run in runs] == ["notes.index", "notes.search", "local_answer"]
+    assert [run[0] for run in runs] == ["index", "search", "show", "ask"]
+    assert [run[1] for run in runs] == ["notes.index", "notes.search", "notes.show", "local_answer"]
     assert all(run[2] == "succeeded" for run in runs)
     assert runs[1][3] == "results=1 llm=none model=none reason=search_only"
-    assert runs[2][3] == "results=2 llm=none model=none local_model_used=False"
+    assert runs[3][3] == "results=2 llm=none model=none local_model_used=False"
     assert [chunk[0] for chunk in chunks] == ["Project Alpha", "Decision"]
     assert search_events == [("llm", "llm=none model=none reason=search_only")]
     assert [event[0] for event in ask_events] == [
@@ -91,6 +103,7 @@ Avoid remote LLM calls in phase one.
     ]
     assert "search*" in ask_events[0][1]
     assert "project.md" in ask_events[1][1]
+    assert "Project Alpha" in ask_events[1][1]
     assert ask_events[2][1] == "llm=none model=none"
     assert ask_events[3][1] == "llm=none model=none local_model_used=False"
     assert "The strongest matching note says" in ask_events[4][1]
@@ -98,6 +111,7 @@ Avoid remote LLM calls in phase one.
     debug_log = debug_log_path.read_text(encoding="utf-8")
     assert "command=index status=succeeded" in debug_log
     assert "command=search status=succeeded" in debug_log
+    assert "command=show status=succeeded" in debug_log
     assert "command=ask status=succeeded" in debug_log
 
 

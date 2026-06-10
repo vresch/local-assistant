@@ -61,8 +61,8 @@ def answer_question(
             sources=[],
         )
 
-    sources = [_source_reference(result) for result in results]
-    supporting_notes = [_plain_excerpt(result.content) for result in results]
+    sources = _grouped_sources(results)
+    supporting_notes = [_supporting_note(result) for result in results]
     model_requested = use_model and model_path is not None
     if model_requested:
         direct_answer = _llama_answer(
@@ -152,11 +152,11 @@ def _load_llama_class() -> Any:
 def _build_prompt(question: str, results: list[SearchResult]) -> str:
     context_blocks = []
     for index, result in enumerate(results, start=1):
-        heading = f" ({result.heading})" if result.heading else ""
+        heading = f" ({result.heading_path or result.heading})" if result.heading_path or result.heading else ""
         context_blocks.append(
             "\n".join(
                 [
-                    f"[{index}] {result.path}{heading}, chunk {result.chunk_index + 1}",
+                    f"[{index}] {result.title}: {result.path}{heading}, chunk {result.chunk_index + 1}",
                     result.content,
                 ]
             )
@@ -225,10 +225,32 @@ def _extractive_answer(results: list[SearchResult]) -> str:
 
 def _source_reference(result: SearchResult) -> str:
     parts = [result.path]
-    if result.heading:
-        parts.append(result.heading)
+    if result.heading_path or result.heading:
+        parts.append(result.heading_path or result.heading or "")
     parts.append(f"chunk {result.chunk_index + 1}")
     return " - ".join(parts)
+
+
+def _grouped_sources(results: list[SearchResult]) -> list[str]:
+    grouped: dict[str, list[SearchResult]] = {}
+    for result in results:
+        grouped.setdefault(result.path, []).append(result)
+
+    sources: list[str] = []
+    for path, path_results in grouped.items():
+        title = path_results[0].title
+        chunks = ", ".join(f"chunk {result.chunk_index + 1}" for result in path_results)
+        headings = [result.heading_path or result.heading for result in path_results if result.heading_path or result.heading]
+        heading_text = f" - {'; '.join(dict.fromkeys(headings))}" if headings else ""
+        sources.append(f"{path} - {title}{heading_text} - {chunks}")
+    return sources
+
+
+def _supporting_note(result: SearchResult) -> str:
+    label = result.title
+    if result.heading_path or result.heading:
+        label = f"{label} > {result.heading_path or result.heading}"
+    return f"{label}: {_plain_excerpt(result.content)}"
 
 
 def _plain_excerpt(text: str, max_chars: int = 320) -> str:
@@ -244,7 +266,8 @@ def _source_excerpt(result: SearchResult, max_chars: int = 220) -> str:
     if result.heading:
         heading = result.heading.strip()
         if excerpt and not excerpt.lower().startswith(heading.lower()):
-            return f"{heading}: {excerpt}"
+            label = result.heading_path or heading
+            return f"{label}: {excerpt}"
     return excerpt
 
 

@@ -1,19 +1,28 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 from assistant.notes.chunker import chunk_markdown
+from assistant.notes.metadata import extract_metadata
 
 
 @dataclass(frozen=True)
 class IndexStats:
     scanned: int = 0
-    indexed: int = 0
+    new: int = 0
+    updated: int = 0
     skipped: int = 0
+    removed: int = 0
+    failed: int = 0
     chunks: int = 0
+
+    @property
+    def indexed(self) -> int:
+        return self.new + self.updated
 
 
 def index_notes(conn: sqlite3.Connection, notes_dir: Path) -> IndexStats:
@@ -36,9 +45,14 @@ def index_notes(conn: sqlite3.Connection, notes_dir: Path) -> IndexStats:
         if existing and existing["content_hash"] == file_hash:
             stats = _add(stats, skipped=1)
             continue
-        chunk_count = index_file(conn, path, file_hash)
-        stats = _add(stats, indexed=1, chunks=chunk_count)
-    cleanup_stale_documents(conn, notes_dir, current_paths)
+        try:
+            chunk_count = index_file(conn, path, file_hash)
+        except Exception:
+            stats = _add(stats, failed=1)
+            continue
+        stats = _add(stats, updated=1 if existing else 0, new=0 if existing else 1, chunks=chunk_count)
+    removed = cleanup_stale_documents(conn, notes_dir, current_paths)
+    stats = _add(stats, removed=removed)
     conn.commit()
     return stats
 
@@ -47,7 +61,11 @@ def index_file(conn: sqlite3.Connection, path: Path, file_hash: str | None = Non
     file_hash = file_hash or content_hash(path)
     markdown = path.read_text(encoding="utf-8", errors="replace")
     chunks = chunk_markdown(markdown)
-    mtime_ns = path.stat().st_mtime_ns
+    stat = path.stat()
+    metadata = extract_metadata(markdown, path)
+    mtime_ns = stat.st_mtime_ns
+    file_size = stat.st_size
+    tags_json = json.dumps(list(metadata.tags), sort_keys=True)
 
     existing = conn.execute("SELECT id FROM documents WHERE path = ?", (str(path),)).fetchone()
     if existing:
@@ -60,25 +78,51 @@ def index_file(conn: sqlite3.Connection, path: Path, file_hash: str | None = Non
         conn.execute(
             """
             UPDATE documents
-            SET content_hash = ?, mtime_ns = ?, indexed_at = CURRENT_TIMESTAMP
+            SET content_hash = ?,
+                mtime_ns = ?,
+                title = ?,
+                file_size = ?,
+                tags_json = ?,
+                indexed_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (file_hash, mtime_ns, document_id),
+            (file_hash, mtime_ns, metadata.title, file_size, tags_json, document_id),
         )
     else:
         cursor = conn.execute(
-            "INSERT INTO documents(path, content_hash, mtime_ns) VALUES (?, ?, ?)",
-            (str(path), file_hash, mtime_ns),
+            """
+            INSERT INTO documents(path, content_hash, mtime_ns, title, file_size, tags_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (str(path), file_hash, mtime_ns, metadata.title, file_size, tags_json),
         )
         document_id = int(cursor.lastrowid)
 
     for index, chunk in enumerate(chunks):
         cursor = conn.execute(
             """
-            INSERT INTO chunks(document_id, chunk_index, heading, content)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO chunks(
+                document_id,
+                chunk_index,
+                heading,
+                content,
+                heading_path,
+                token_count,
+                start_line,
+                end_line
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (document_id, index, chunk.heading, chunk.content),
+            (
+                document_id,
+                index,
+                chunk.heading,
+                chunk.content,
+                chunk.heading_path,
+                chunk.token_count,
+                chunk.start_line,
+                chunk.end_line,
+            ),
         )
         chunk_id = int(cursor.lastrowid)
         conn.execute(
@@ -86,7 +130,7 @@ def index_file(conn: sqlite3.Connection, path: Path, file_hash: str | None = Non
             INSERT INTO chunks_fts(chunk_id, path, heading, content)
             VALUES (?, ?, ?, ?)
             """,
-            (chunk_id, str(path), chunk.heading or "", chunk.content),
+            (chunk_id, str(path), chunk.heading_path or chunk.heading or "", chunk.content),
         )
     return len(chunks)
 
@@ -121,10 +165,22 @@ def cleanup_stale_documents(conn: sqlite3.Connection, notes_dir: Path, current_p
     return len(stale_document_ids)
 
 
-def _add(stats: IndexStats, scanned: int = 0, indexed: int = 0, skipped: int = 0, chunks: int = 0) -> IndexStats:
+def _add(
+    stats: IndexStats,
+    scanned: int = 0,
+    new: int = 0,
+    updated: int = 0,
+    skipped: int = 0,
+    removed: int = 0,
+    failed: int = 0,
+    chunks: int = 0,
+) -> IndexStats:
     return IndexStats(
         scanned=stats.scanned + scanned,
-        indexed=stats.indexed + indexed,
+        new=stats.new + new,
+        updated=stats.updated + updated,
         skipped=stats.skipped + skipped,
+        removed=stats.removed + removed,
+        failed=stats.failed + failed,
         chunks=stats.chunks + chunks,
     )

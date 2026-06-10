@@ -15,7 +15,7 @@ from assistant.logs.debug import get_debug_logger
 from assistant.logs.logger import finish_run, log_event, start_run, update_run_route
 from assistant.notes.categorizer import NoteCategory, categorise_notes
 from assistant.notes.indexer import index_notes
-from assistant.notes.search import search_notes
+from assistant.notes.search import SearchResult, get_chunk, search_notes
 from assistant.orchestrator import answer_question
 from assistant.providers.remote import build_remote_provider
 from assistant.research import research_question
@@ -56,8 +56,8 @@ def index() -> None:
         try:
             stats = index_notes(conn, settings.notes_dir)
             summary = (
-                f"scanned={stats.scanned} indexed={stats.indexed} "
-                f"skipped={stats.skipped} chunks={stats.chunks}"
+                f"scanned={stats.scanned} new={stats.new} updated={stats.updated} "
+                f"skipped={stats.skipped} removed={stats.removed} failed={stats.failed} chunks={stats.chunks}"
             )
             log_event(conn, run_id, "index", summary)
             finish_run(conn, run_id, "succeeded", summary)
@@ -70,16 +70,30 @@ def index() -> None:
 
 
 @app.command()
-def search(query: str, limit: int = 5) -> None:
+def search(
+    query: str,
+    limit: int = typer.Option(5, "--limit", min=1),
+    tag: str | None = typer.Option(None, "--tag"),
+    path: str | None = typer.Option(None, "--path"),
+    since: str | None = typer.Option(None, "--since"),
+) -> None:
     """Search indexed notes."""
     settings = get_settings()
     debug = get_debug_logger(settings.debug_log_path)
-    debug.info("command=search query=%r limit=%s db_path=%s", query, limit, settings.db_path)
+    debug.info(
+        "command=search query=%r limit=%s tag=%r path=%r since=%r db_path=%s",
+        query,
+        limit,
+        tag,
+        path,
+        since,
+        settings.db_path,
+    )
     with connect(settings.db_path) as conn:
         run_id = start_run(conn, "search", query, "notes.search")
         try:
             with _status("Searching notes..."):
-                results = search_notes(conn, query, limit=limit)
+                results = search_notes(conn, query, limit=limit, tag=tag, path=path, since=since)
             _print_results(results)
             llm_summary = "llm=none model=none reason=search_only"
             log_event(conn, run_id, "llm", llm_summary)
@@ -89,6 +103,34 @@ def search(query: str, limit: int = 5) -> None:
         except Exception as exc:
             finish_run(conn, run_id, "failed", str(exc))
             debug.exception("command=search status=failed run_id=%s", run_id)
+            raise
+
+
+@app.command()
+def show(chunk_id: int) -> None:
+    """Show a stored chunk and its metadata."""
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=show chunk_id=%s db_path=%s", chunk_id, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "show", str(chunk_id), "notes.show")
+        try:
+            result = get_chunk(conn, chunk_id)
+            if result is None:
+                summary = f"chunk_id={chunk_id} found=false"
+                finish_run(conn, run_id, "failed", summary)
+                err_console.print(f"Chunk not found: {chunk_id}")
+                raise typer.Exit(1)
+            _print_chunk(result)
+            summary = f"chunk_id={chunk_id} found=true"
+            log_event(conn, run_id, "chunk", summary)
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=show status=succeeded run_id=%s %s", run_id, summary)
+        except typer.Exit:
+            raise
+        except Exception as exc:
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=show status=failed run_id=%s", run_id)
             raise
 
 
@@ -393,14 +435,34 @@ def run(tool_name: str) -> None:
     raise typer.Exit(exit_code)
 
 
-def _print_results(results: list[object]) -> None:
-    table = Table(title="Search Results")
-    table.add_column("Path", overflow="fold")
-    table.add_column("Heading")
-    table.add_column("Snippet")
-    for result in results:
-        table.add_row(result.path, result.heading or "", result.snippet)
-    console.print(table)
+def _print_results(results: list[SearchResult]) -> None:
+    console.print("Search Results (Chunk IDs shown)")
+    if not results:
+        console.print("No results.")
+        return
+    for index, result in enumerate(results, start=1):
+        console.print(f"{index}. [chunk {result.chunk_id}] {result.path}", markup=False)
+        console.print(f"   title: {result.title}", markup=False)
+        if result.heading_path or result.heading:
+            console.print(f"   heading: {result.heading_path or result.heading}", markup=False)
+        console.print(f"   modified: {result.modified_at}", markup=False)
+        console.print(f"   tags: {', '.join(result.tags) or 'none'}", markup=False)
+        console.print(f"   Score: {result.score:.3f}", markup=False)
+        console.print(f"   snippet: {result.snippet}", markup=False)
+
+
+def _print_chunk(result: SearchResult) -> None:
+    details = Text()
+    _append_dashboard_kv(details, "chunk_id", result.chunk_id, value_style=DASHBOARD_GOOD)
+    _append_dashboard_kv(details, "title", result.title)
+    _append_dashboard_kv(details, "path", result.path, value_style=DASHBOARD_MUTED)
+    _append_dashboard_kv(details, "heading_path", result.heading_path or result.heading or "")
+    _append_dashboard_kv(details, "modified", result.modified_at, value_style=DASHBOARD_MUTED)
+    _append_dashboard_kv(details, "tags", ", ".join(result.tags) or "none")
+    _append_dashboard_kv(details, "lines", f"{result.start_line}-{result.end_line}")
+    _append_dashboard_kv(details, "tokens", result.token_count)
+    console.print(Panel(details, title=Text("Chunk Metadata", style="bold white"), border_style=DASHBOARD_BORDER))
+    console.print(result.content)
 
 
 def _print_categories(categories: list[NoteCategory]) -> None:

@@ -230,13 +230,13 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(
 
 ### Phase 2 Metadata Extensions
 
-Phase 2 may extend the core tables instead of replacing them.
+Phase 2 extends the core tables instead of replacing them. Migrations must be idempotent so existing local databases can be opened safely.
 
-Suggested additions:
+Implemented additions:
 
 ```sql
+ALTER TABLE documents ADD COLUMN title TEXT;
 ALTER TABLE documents ADD COLUMN file_size INTEGER;
-ALTER TABLE documents ADD COLUMN indexed_at TEXT;
 ALTER TABLE documents ADD COLUMN tags_json TEXT;
 
 ALTER TABLE chunks ADD COLUMN heading_path TEXT;
@@ -246,6 +246,13 @@ ALTER TABLE chunks ADD COLUMN end_line INTEGER;
 ```
 
 These fields support better ranking, filtering, source display, and incremental indexing while keeping SQLite + FTS5 as the retrieval system.
+
+Phase 2 search supports chunk IDs, title and heading-path display, tag/path/since filters, deterministic BM25-based ranking with title and heading boosts, and direct chunk inspection:
+
+```bash
+assistant search "query" --limit 10 --tag business --path projects --since 2026-01-01
+assistant show <chunk-id>
+```
 
 ### Logging Tables
 

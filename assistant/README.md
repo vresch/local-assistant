@@ -1,6 +1,6 @@
 # Local Assistant
 
-Phase 1 MVP for a CLI-first, local-first personal AI assistant.
+Phase 1 MVP with Phase 2 note metadata and search inspection for a CLI-first, local-first personal AI assistant.
 
 The core Phase 1 path is fully local: index Markdown notes, search them with SQLite FTS5, answer from retrieved notes, run registered Python tools through `uv`, and log actions locally. Optional model-backed commands are available, but the assistant works without a configured model or remote provider.
 
@@ -37,6 +37,13 @@ Search indexed notes:
 
 ```bash
 uv run assistant search "project alpha"
+```
+
+Search supports metadata filters and prints chunk IDs for inspection:
+
+```bash
+uv run assistant search "project alpha" --limit 10 --tag business --path projects --since 2026-01-01
+uv run assistant show 42
 ```
 
 Ask a question using retrieved notes only. If `ASSISTANT_LLAMA_MODEL_PATH` points to a local GGUF model,
@@ -132,13 +139,13 @@ Environment variables:
 
 The SQLite database stores:
 
-- `documents`
-- `chunks`
+- `documents` with title, file size, tags, content hash, and mtime metadata
+- `chunks` with heading paths, line ranges, and approximate token counts
 - `chunks_fts`
 - `runs`
 - `run_events`
 
-Markdown files are skipped on subsequent indexing runs when their content hash has not changed.
+Markdown files are skipped on subsequent indexing runs when their content hash has not changed. Deleted files are removed from the index.
 
 ## Tests
 
