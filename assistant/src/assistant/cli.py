@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 import shlex
 
@@ -10,7 +11,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from assistant.config import get_settings, validate_llama_settings
+from assistant.config import get_settings, validate_local_model_settings
 from assistant.db import cleanup_database, connect
 from assistant.logs.debug import get_debug_logger
 from assistant.logs.logger import finish_run, log_event, start_run, update_run_route
@@ -18,6 +19,7 @@ from assistant.notes.categorizer import NoteCategory, categorise_notes
 from assistant.notes.indexer import index_notes
 from assistant.notes.search import SearchResult, get_chunk, search_notes
 from assistant.orchestrator import answer_question
+from assistant.providers.local import build_local_provider
 from assistant.providers.remote import build_remote_provider
 from assistant.research import research_question
 from assistant.tools.registry import ToolSpec, build_command, load_registry
@@ -158,28 +160,54 @@ def categorise_notes_command() -> None:
 
 
 @app.command()
-def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
+def ask(
+    question: str,
+    limit: int = typer.Option(5, "--limit", min=1),
+    no_model: bool = typer.Option(False, "--no-model", help="Use extractive local-note answers only."),
+    model_provider: str | None = typer.Option(None, "--model-provider", help="Local provider to use for this ask."),
+    model_required: bool = typer.Option(False, "--model-required", help="Fail if no local provider is configured."),
+) -> None:
     """Answer a question from indexed notes."""
     settings = get_settings()
     debug = get_debug_logger(settings.debug_log_path)
     debug.info(
-        "command=ask question=%r limit=%s no_model=%s db_path=%s",
+        "command=ask question=%r limit=%s no_model=%s model_provider=%r model_required=%s db_path=%s",
         question,
         limit,
         no_model,
+        model_provider,
+        model_required,
         settings.db_path,
     )
+    if model_provider and not no_model:
+        settings = replace(settings, local_provider=model_provider)
+
+    local_provider = None
+    provider_config_error = None
+    if not no_model:
+        try:
+            local_provider = build_local_provider(settings)
+        except Exception as exc:
+            provider_config_error = str(exc)
+
     with connect(settings.db_path) as conn:
         run_id = start_run(conn, "ask", question, "local_answer")
         try:
-            llm_config_issues = [] if no_model else validate_llama_settings(settings)
-            if llm_config_issues:
-                summary = "invalid_llm_config " + "; ".join(llm_config_issues)
+            local_model_requested = not no_model and (settings.local_provider is not None or model_required)
+            if model_required and local_provider is None and provider_config_error is None:
+                provider_config_error = "local model required but no local provider is configured"
+
+            config_issues = [] if no_model else validate_local_model_settings(settings)
+            if provider_config_error:
+                config_issues.append(provider_config_error)
+
+            if config_issues:
+                summary = "invalid_local_model_config " + "; ".join(config_issues)
                 log_event(conn, run_id, "llm_config", summary)
                 finish_run(conn, run_id, "failed", summary)
                 debug.error("command=ask status=failed run_id=%s %s", run_id, summary)
-                for issue in llm_config_issues:
-                    err_console.print(f"Invalid LLM configuration: {issue}", soft_wrap=True)
+                for issue in config_issues:
+                    err_console.print(f"Invalid local model configuration: {issue}", soft_wrap=True)
                 raise typer.Exit(1)
 
             with _status("Thinking with local notes..."):
@@ -188,10 +216,7 @@ def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
                     question,
                     limit=limit,
                     use_model=not no_model,
-                    model_path=settings.llama_model_path,
-                    context_size=settings.llama_context_size,
-                    max_tokens=settings.llama_max_tokens,
-                    temperature=settings.llama_temperature,
+                    local_provider=local_provider,
                 )
             log_event(conn, run_id, "normalized_query", answer.normalized_query)
             log_event(conn, run_id, "retrieved_sources", "\n".join(answer.sources) or "none")
@@ -199,7 +224,11 @@ def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
                 conn,
                 run_id,
                 "llm",
-                f"llm={answer.llm} model={answer.local_model or 'none'}",
+                (
+                    f"llm={answer.llm} "
+                    f"model={answer.local_model or 'none'} "
+                    f"local_provider={settings.local_provider or 'none'}"
+                ),
             )
             log_event(
                 conn,
@@ -208,7 +237,11 @@ def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
                 (
                     f"llm={answer.llm} "
                     f"model={answer.local_model or 'none'} "
-                    f"local_model_used={answer.used_local_model}"
+                    f"local_model_requested={local_model_requested} "
+                    f"local_model_used={answer.used_local_model} "
+                    f"prompt_chunks={answer.prompt_chunk_count} "
+                    f"prompt_chars={answer.prompt_char_count} "
+                    f"fallback={'none' if answer.used_local_model else 'extractive'}"
                 ),
             )
             log_event(conn, run_id, "answer", answer.answer)
@@ -218,6 +251,7 @@ def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
                 f"results={len(answer.results)} "
                 f"llm={answer.llm} "
                 f"model={answer.local_model or 'none'} "
+                f"local_model_requested={local_model_requested} "
                 f"local_model_used={answer.used_local_model}"
             )
             finish_run(conn, run_id, "succeeded", summary)
@@ -225,6 +259,8 @@ def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
         except typer.Exit:
             raise
         except Exception as exc:
+            if local_provider is not None:
+                log_event(conn, run_id, "provider_error", str(exc))
             finish_run(conn, run_id, "failed", str(exc))
             debug.exception("command=ask status=failed run_id=%s", run_id)
             raise
@@ -610,9 +646,9 @@ def _dashboard_overview(settings, counts: dict[str, int]) -> Text:
     _append_dashboard_kv(overview, "db_path", settings.db_path, value_style=DASHBOARD_MUTED)
     _append_dashboard_kv(overview, "notes_dir", settings.notes_dir, value_style=DASHBOARD_MUTED)
     _append_dashboard_kv(overview, "debug_log_path", settings.debug_log_path, value_style=DASHBOARD_MUTED)
-    configured_llm = "llama-cpp-python" if settings.llama_model_path else "none"
+    configured_llm = settings.local_provider or "none"
     _append_dashboard_kv(overview, "configured_llm", configured_llm, value_style=DASHBOARD_LLM)
-    _append_dashboard_kv(overview, "configured_model", settings.llama_model_path or "none", value_style=DASHBOARD_LLM)
+    _append_dashboard_kv(overview, "configured_model", settings.local_model or "none", value_style=DASHBOARD_LLM)
     overview.append("\n")
     _append_dashboard_kv(overview, "documents", counts["documents"], value_style=DASHBOARD_GOOD)
     _append_dashboard_kv(overview, "chunks", counts["chunks"], value_style=DASHBOARD_GOOD)

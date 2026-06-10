@@ -1,73 +1,53 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-
-import pytest
 
 from assistant.db import connect
 from assistant.notes.indexer import index_notes
 from assistant.orchestrator import answer_question
+from assistant.providers.local import LocalModelResponse
 
 
-def test_answer_question_uses_llama_when_model_path_is_configured(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+class FakeProvider:
+    provider_name = "fake-local"
+    model_name = "fake-model"
+
+    def __init__(self, text: str = "SQLite FTS5 should be used.") -> None:
+        self.text = text
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str) -> LocalModelResponse:
+        self.prompts.append(prompt)
+        return LocalModelResponse(text=self.text, provider=self.provider_name, model=self.model_name)
+
+
+def test_answer_question_uses_local_provider_when_configured(tmp_path: Path) -> None:
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
     (notes_dir / "project.md").write_text(
         "# Project Alpha\nSQLite FTS5 powers local note search.",
         encoding="utf-8",
     )
-    model_path = tmp_path / "model.gguf"
-    model_path.write_text("fake model", encoding="utf-8")
-
-    class FakeLlama:
-        init_kwargs: dict[str, Any] = {}
-        prompt = ""
-        call_kwargs: dict[str, Any] = {}
-
-        def __init__(self, **kwargs: Any) -> None:
-            FakeLlama.init_kwargs = kwargs
-
-        def __call__(self, prompt: str, **kwargs: Any) -> dict[str, object]:
-            FakeLlama.prompt = prompt
-            FakeLlama.call_kwargs = kwargs
-            return {"choices": [{"text": "SQLite FTS5 should be used.\nQuestion: extra prompt text"}]}
-
-    monkeypatch.setattr("assistant.orchestrator._load_llama_class", lambda: FakeLlama)
+    provider = FakeProvider()
 
     with connect(tmp_path / "assistant.db") as conn:
         index_notes(conn, notes_dir)
-        answer = answer_question(
-            conn,
-            "What powers local search?",
-            model_path=model_path,
-            context_size=1024,
-            max_tokens=64,
-            temperature=0.0,
-        )
+        answer = answer_question(conn, "What powers local search?", local_provider=provider)
 
     assert answer.used_local_model is True
-    assert answer.llm == "llama-cpp-python"
-    assert answer.local_model == str(model_path)
-    assert f"llm=llama-cpp-python; model={model_path}" in answer.summary
+    assert answer.llm == "fake-local"
+    assert answer.local_model == "fake-model"
+    assert "llm=fake-local; model=fake-model" in answer.summary
     assert answer.answer == "SQLite FTS5 should be used."
     assert "SQLite FTS5 should be used." in answer.text
     assert "The strongest matching note says" not in answer.text
-    assert FakeLlama.init_kwargs == {
-        "model_path": str(model_path),
-        "n_ctx": 1024,
-        "verbose": False,
-    }
-    assert FakeLlama.call_kwargs["max_tokens"] == 64
-    assert FakeLlama.call_kwargs["temperature"] == 0.0
-    assert "\nQuestion:" in FakeLlama.call_kwargs["stop"]
-    assert "Local notes:" in FakeLlama.prompt
-    assert "SQLite FTS5 powers local note search." in FakeLlama.prompt
+    assert answer.prompt_chunk_count == 1
+    assert answer.prompt_char_count == len(provider.prompts[0])
+    assert "Local notes:" in provider.prompts[0]
+    assert "SQLite FTS5 powers local note search." in provider.prompts[0]
 
 
-def test_answer_question_skips_llama_without_model_path(tmp_path: Path) -> None:
+def test_answer_question_skips_model_without_provider(tmp_path: Path) -> None:
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
     (notes_dir / "project.md").write_text(
@@ -86,29 +66,37 @@ def test_answer_question_skips_llama_without_model_path(tmp_path: Path) -> None:
     assert "The strongest matching note says" in answer.text
 
 
-def test_answer_question_does_not_use_llama_without_matching_local_context(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_answer_question_does_not_use_provider_without_matching_local_context(tmp_path: Path) -> None:
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
     (notes_dir / "project.md").write_text("# Project Alpha\nSQLite FTS5 powers local note search.", encoding="utf-8")
-    model_path = tmp_path / "model.gguf"
-    model_path.write_text("fake model", encoding="utf-8")
-
-    def fail_if_loaded() -> Any:
-        raise AssertionError("llama should not load without retrieved local context")
-
-    monkeypatch.setattr("assistant.orchestrator._load_llama_class", fail_if_loaded)
+    provider = FakeProvider()
 
     with connect(tmp_path / "assistant.db") as conn:
         index_notes(conn, notes_dir)
-        answer = answer_question(conn, "banana telescope", model_path=model_path)
+        answer = answer_question(conn, "banana telescope", local_provider=provider)
 
     assert answer.used_local_model is False
     assert answer.llm == "none"
     assert answer.local_model is None
     assert answer.sources == []
     assert answer.summary == "no relevant chunks found; local_model_requested=True"
+    assert provider.prompts == []
+
+
+def test_answer_question_empty_provider_text_falls_back_to_extractive_answer(tmp_path: Path) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "project.md").write_text("# Project Alpha\nSQLite FTS5 powers local note search.", encoding="utf-8")
+
+    with connect(tmp_path / "assistant.db") as conn:
+        index_notes(conn, notes_dir)
+        answer = answer_question(conn, "What powers local search?", local_provider=FakeProvider(text=""))
+
+    assert answer.used_local_model is False
+    assert answer.llm == "fake-local"
+    assert answer.local_model == "fake-model"
+    assert "The strongest matching note says" in answer.answer
 
 
 def test_answer_question_synthesizes_multiple_business_ideas_without_model(tmp_path: Path) -> None:

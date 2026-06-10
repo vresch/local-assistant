@@ -13,15 +13,36 @@ class Settings:
     debug_log_path: Path
     llm_summary_path: Path
     research_dir: Path
-    llama_model_path: Path | None
-    llama_context_size: int
-    llama_max_tokens: int
-    llama_temperature: float
+    local_provider: str | None
+    local_model: str | Path | None
+    local_context_size: int
+    local_max_tokens: int
+    local_temperature: float
+    local_base_url: str | None
+    local_timeout: float
     remote_provider: str | None
     remote_model: str | None
     remote_api_key: str | None
     remote_base_url: str
     remote_timeout: float
+
+    @property
+    def llama_model_path(self) -> Path | None:
+        if self.local_provider != "llama-cpp-python" or self.local_model is None:
+            return None
+        return Path(self.local_model).expanduser()
+
+    @property
+    def llama_context_size(self) -> int:
+        return self.local_context_size
+
+    @property
+    def llama_max_tokens(self) -> int:
+        return self.local_max_tokens
+
+    @property
+    def llama_temperature(self) -> float:
+        return self.local_temperature
 
 
 def get_settings() -> Settings:
@@ -34,6 +55,7 @@ def get_settings() -> Settings:
         env_file,
     )
     notes_dir = _path_setting("ASSISTANT_NOTES_DIR", Path.home() / "notes", file_env, env_file)
+    local_provider = _local_provider_setting(file_env)
     return Settings(
         notes_dir=notes_dir,
         db_path=_path_setting("ASSISTANT_DB_PATH", app_dir / "assistant.db", file_env, env_file),
@@ -51,10 +73,13 @@ def get_settings() -> Settings:
             env_file,
         ),
         research_dir=_path_setting("ASSISTANT_RESEARCH_DIR", notes_dir / "research", file_env, env_file),
-        llama_model_path=_optional_path_setting("ASSISTANT_LLAMA_MODEL_PATH", file_env, env_file),
-        llama_context_size=_int_setting("ASSISTANT_LLAMA_CONTEXT_SIZE", 4096, file_env),
-        llama_max_tokens=_int_setting("ASSISTANT_LLAMA_MAX_TOKENS", 256, file_env),
-        llama_temperature=_float_setting("ASSISTANT_LLAMA_TEMPERATURE", 0.2, file_env),
+        local_provider=local_provider,
+        local_model=_local_model_setting(local_provider, file_env, env_file),
+        local_context_size=_int_alias_setting("ASSISTANT_LOCAL_CONTEXT_SIZE", "ASSISTANT_LLAMA_CONTEXT_SIZE", 4096, file_env),
+        local_max_tokens=_int_alias_setting("ASSISTANT_LOCAL_MAX_TOKENS", "ASSISTANT_LLAMA_MAX_TOKENS", 256, file_env),
+        local_temperature=_float_alias_setting("ASSISTANT_LOCAL_TEMPERATURE", "ASSISTANT_LLAMA_TEMPERATURE", 0.2, file_env),
+        local_base_url=_optional_str_setting("ASSISTANT_LOCAL_BASE_URL", file_env),
+        local_timeout=_float_setting("ASSISTANT_LOCAL_TIMEOUT", 30.0, file_env),
         remote_provider=_optional_str_setting("ASSISTANT_REMOTE_PROVIDER", file_env),
         remote_model=_optional_str_setting("ASSISTANT_REMOTE_MODEL", file_env),
         remote_api_key=_optional_str_setting("ASSISTANT_REMOTE_API_KEY", file_env),
@@ -63,24 +88,43 @@ def get_settings() -> Settings:
     )
 
 
-def validate_llama_settings(settings: Settings) -> list[str]:
-    """Return local LLM configuration problems that should block model use."""
+def validate_local_model_settings(settings: Settings) -> list[str]:
+    """Return local model configuration problems that should block model use."""
     issues: list[str] = []
-    if settings.llama_model_path is None:
+    if settings.local_provider is None:
         return issues
 
-    if not settings.llama_model_path.exists():
-        issues.append(f"ASSISTANT_LLAMA_MODEL_PATH does not exist: {settings.llama_model_path}")
-    elif not settings.llama_model_path.is_file():
-        issues.append(f"ASSISTANT_LLAMA_MODEL_PATH is not a file: {settings.llama_model_path}")
+    if settings.local_provider not in {"llama-cpp-python", "llama.cpp-server"}:
+        issues.append(
+            f"ASSISTANT_LOCAL_PROVIDER unsupported: {settings.local_provider}; "
+            "supported: llama-cpp-python, llama.cpp-server"
+        )
 
-    if settings.llama_context_size <= 0:
-        issues.append("ASSISTANT_LLAMA_CONTEXT_SIZE must be greater than zero")
-    if settings.llama_max_tokens <= 0:
-        issues.append("ASSISTANT_LLAMA_MAX_TOKENS must be greater than zero")
-    if settings.llama_temperature < 0:
-        issues.append("ASSISTANT_LLAMA_TEMPERATURE must be zero or greater")
+    if settings.local_provider == "llama-cpp-python":
+        if settings.local_model is None:
+            issues.append("ASSISTANT_LOCAL_MODEL is required for llama-cpp-python")
+        else:
+            model_path = Path(settings.local_model).expanduser()
+            if not model_path.exists():
+                issues.append(f"ASSISTANT_LOCAL_MODEL does not exist: {model_path}")
+            elif not model_path.is_file():
+                issues.append(f"ASSISTANT_LOCAL_MODEL is not a file: {model_path}")
+
+    if settings.local_context_size <= 0:
+        issues.append("ASSISTANT_LOCAL_CONTEXT_SIZE must be greater than zero")
+    if settings.local_max_tokens <= 0:
+        issues.append("ASSISTANT_LOCAL_MAX_TOKENS must be greater than zero")
+    if settings.local_temperature < 0:
+        issues.append("ASSISTANT_LOCAL_TEMPERATURE must be zero or greater")
+    if settings.local_timeout <= 0:
+        issues.append("ASSISTANT_LOCAL_TIMEOUT must be greater than zero")
     return issues
+
+
+def validate_llama_settings(settings: Settings) -> list[str]:
+    """Compatibility wrapper for older callers."""
+    issues = validate_local_model_settings(settings)
+    return [issue.replace("ASSISTANT_LOCAL_MODEL", "ASSISTANT_LLAMA_MODEL_PATH") for issue in issues]
 
 
 def find_env_file(start: Path) -> Path | None:
@@ -123,6 +167,41 @@ def _optional_path_setting(name: str, file_env: dict[str, str], env_file: Path |
     return None
 
 
+def _local_provider_setting(file_env: dict[str, str]) -> str | None:
+    provider = _optional_str_setting("ASSISTANT_LOCAL_PROVIDER", file_env)
+    if provider:
+        return provider
+    old_model = os.environ.get("ASSISTANT_LLAMA_MODEL_PATH", file_env.get("ASSISTANT_LLAMA_MODEL_PATH"))
+    if old_model is not None and old_model.strip():
+        return "llama-cpp-python"
+    return None
+
+
+def _optional_path_alias_setting(
+    name: str,
+    alias: str,
+    file_env: dict[str, str],
+    env_file: Path | None,
+) -> Path | None:
+    value = _optional_path_setting(name, file_env, env_file)
+    if value is not None:
+        return value
+    return _optional_path_setting(alias, file_env, env_file)
+
+
+def _local_model_setting(
+    local_provider: str | None,
+    file_env: dict[str, str],
+    env_file: Path | None,
+) -> str | Path | None:
+    if local_provider == "llama-cpp-python":
+        return _optional_path_alias_setting("ASSISTANT_LOCAL_MODEL", "ASSISTANT_LLAMA_MODEL_PATH", file_env, env_file)
+    value = _optional_str_setting("ASSISTANT_LOCAL_MODEL", file_env)
+    if value is not None:
+        return value
+    return _optional_path_setting("ASSISTANT_LLAMA_MODEL_PATH", file_env, env_file)
+
+
 def _int_setting(name: str, default: int, file_env: dict[str, str]) -> int:
     raw = os.environ.get(name, file_env.get(name))
     if raw is None or not raw.strip():
@@ -133,11 +212,23 @@ def _int_setting(name: str, default: int, file_env: dict[str, str]) -> int:
     return value
 
 
+def _int_alias_setting(name: str, alias: str, default: int, file_env: dict[str, str]) -> int:
+    if os.environ.get(name, file_env.get(name)) is not None:
+        return _int_setting(name, default, file_env)
+    return _int_setting(alias, default, file_env)
+
+
 def _float_setting(name: str, default: float, file_env: dict[str, str]) -> float:
     raw = os.environ.get(name, file_env.get(name))
     if raw is None or not raw.strip():
         return default
     return float(raw)
+
+
+def _float_alias_setting(name: str, alias: str, default: float, file_env: dict[str, str]) -> float:
+    if os.environ.get(name, file_env.get(name)) is not None:
+        return _float_setting(name, default, file_env)
+    return _float_setting(alias, default, file_env)
 
 
 def _str_setting(name: str, default: str, file_env: dict[str, str]) -> str:

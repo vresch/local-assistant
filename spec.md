@@ -1,5 +1,32 @@
 # Local-First Personal AI Assistant Specification
 
+## Table Of Contents
+
+- [1. Purpose](#1-purpose)
+- [2. Phase 1 Contract](#2-phase-1-contract)
+  - [Must Have](#must-have)
+  - [Optional In Phase 1](#optional-in-phase-1)
+  - [Out Of Scope For Phase 1](#out-of-scope-for-phase-1)
+  - [MVP Definition](#mvp-definition)
+- [3. Design Principles](#3-design-principles)
+  - [Local-First](#local-first)
+  - [Notes As Primary Memory](#notes-as-primary-memory)
+  - [Python As Action Layer](#python-as-action-layer)
+  - [Assistant-First Design](#assistant-first-design)
+- [4. Architecture](#4-architecture)
+  - [Component Boundaries](#component-boundaries)
+- [5. Data Storage](#5-data-storage)
+  - [Core Tables](#core-tables)
+  - [Phase 2 Metadata Extensions](#phase-2-metadata-extensions)
+  - [Logging Tables](#logging-tables)
+  - [Optional Roadmap Table](#optional-roadmap-table)
+- [6. CLI Commands](#6-cli-commands)
+  - [`assistant index`](#assistant-index)
+  - [`assistant search`](#assistant-search)
+  - [`assistant ask`](#assistant-ask)
+  - [`assistant run`](#assistant-run)
+  - [`assistant research`](#assistant-research)
+
 ## 1. Purpose
 
 Build a CLI-first personal AI assistant that uses local notes, local tools, and local logs as its core system.
@@ -183,6 +210,7 @@ assistant/
     indexer.py
     search.py
   providers/
+    local.py
     remote.py
   tools/
     registry.py
@@ -205,6 +233,27 @@ assistant/
 | Config | Paths, provider settings, registry paths, logging preferences | Runtime decisions |
 
 Provider support is optional. The Phase 1 core must work without any configured model provider.
+
+Local model providers are configured explicitly:
+
+```bash
+ASSISTANT_LOCAL_PROVIDER=llama-cpp-python
+ASSISTANT_LOCAL_MODEL=/path/to/model.gguf
+ASSISTANT_LOCAL_CONTEXT_SIZE=4096
+ASSISTANT_LOCAL_MAX_TOKENS=256
+ASSISTANT_LOCAL_TEMPERATURE=0.2
+```
+
+`llama.cpp-server` is also supported through its OpenAI-compatible chat endpoint:
+
+```bash
+ASSISTANT_LOCAL_PROVIDER=llama.cpp-server
+ASSISTANT_LOCAL_BASE_URL=http://127.0.0.1:8080
+ASSISTANT_LOCAL_MODEL=local
+```
+
+Older `ASSISTANT_LLAMA_*` settings remain compatibility aliases for the in-process
+`llama-cpp-python` provider. `assistant ask --no-model` always disables provider use.
 
 ## 5. Data Storage
 

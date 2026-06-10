@@ -3,11 +3,9 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
-from importlib import import_module
-from pathlib import Path
-from typing import Any
 
 from assistant.notes.search import SearchResult, search_notes, to_fts_query
+from assistant.providers.local import LocalModelProvider
 
 
 @dataclass(frozen=True)
@@ -21,21 +19,21 @@ class AnswerResult:
     local_model: str | None
     summary: str
     sources: list[str]
+    prompt_chunk_count: int
+    prompt_char_count: int
 
 
 def answer_question(
     conn: sqlite3.Connection,
     question: str,
     limit: int = 5,
+    local_provider: LocalModelProvider | None = None,
     use_model: bool = True,
-    model_path: Path | None = None,
-    context_size: int = 4096,
-    max_tokens: int = 256,
-    temperature: float = 0.2,
 ) -> AnswerResult:
     normalized_query = to_fts_query(question)
     results = search_notes(conn, question, limit=limit)
     if not results:
+        model_requested = use_model and local_provider is not None
         direct_answer = "I could not find relevant notes for that question."
         text = "\n".join(
             [
@@ -57,25 +55,22 @@ def answer_question(
             llm="none",
             used_local_model=False,
             local_model=None,
-            summary=f"no relevant chunks found; local_model_requested={use_model}",
+            summary=f"no relevant chunks found; local_model_requested={model_requested}",
             sources=[],
+            prompt_chunk_count=0,
+            prompt_char_count=0,
         )
 
     sources = _grouped_sources(results)
     supporting_notes = [_supporting_note(result) for result in results]
-    model_requested = use_model and model_path is not None
+    model_requested = use_model and local_provider is not None
+    prompt = _build_prompt(question, results) if model_requested else ""
     if model_requested:
-        direct_answer = _llama_answer(
-            question,
-            results,
-            model_path,
-            context_size=context_size,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        used_local_model = True
-        llm = "llama-cpp-python"
-        local_model = str(model_path)
+        response = local_provider.complete(prompt)
+        direct_answer = response.text or _extractive_answer(results)
+        used_local_model = bool(response.text)
+        llm = response.provider
+        local_model = response.model
     else:
         direct_answer = _extractive_answer(results)
         used_local_model = False
@@ -107,46 +102,13 @@ def answer_question(
             f"answered from {len(results)} local chunks; "
             f"llm={llm}; "
             f"model={local_model or 'none'}; "
-            f"local_model_requested={use_model}; "
+            f"local_model_requested={model_requested}; "
             f"local_model_used={used_local_model}"
         ),
         sources=sources,
+        prompt_chunk_count=len(results),
+        prompt_char_count=len(prompt),
     )
-
-
-def _llama_answer(
-    question: str,
-    results: list[SearchResult],
-    model_path: Path | None,
-    context_size: int,
-    max_tokens: int,
-    temperature: float,
-) -> str:
-    if model_path is None:
-        raise ValueError("model_path is required when local model synthesis is enabled")
-    if not model_path.is_file():
-        raise FileNotFoundError(f"llama model not found: {model_path}")
-
-    llama_cls = _load_llama_class()
-    model = llama_cls(model_path=str(model_path), n_ctx=context_size, verbose=False)
-    response = model(
-        _build_prompt(question, results),
-        max_tokens=max_tokens,
-        temperature=temperature,
-        stop=["\nQuestion:", "\nSupporting notes:", "\nSources:", "\nNext action:"],
-    )
-    text = _clean_generated_answer(_extract_llama_text(response))
-    return text or _extractive_answer(results)
-
-
-def _load_llama_class() -> Any:
-    try:
-        return import_module("llama_cpp").Llama
-    except ImportError as exc:
-        raise RuntimeError(
-            "llama-cpp-python is required for local model answers. "
-            "Install dependencies with `uv sync` or run `assistant ask --no-model`."
-        ) from exc
 
 
 def _build_prompt(question: str, results: list[SearchResult]) -> str:
@@ -175,26 +137,6 @@ def _build_prompt(question: str, results: list[SearchResult]) -> str:
             "Answer:",
         ]
     )
-
-
-def _extract_llama_text(response: Any) -> str:
-    if isinstance(response, dict):
-        choices = response.get("choices")
-        if isinstance(choices, list) and choices:
-            first = choices[0]
-            if isinstance(first, dict):
-                text = first.get("text")
-                if isinstance(text, str):
-                    return text.strip()
-    return str(response).strip()
-
-
-def _clean_generated_answer(text: str) -> str:
-    cleaned = text.strip()
-    for marker in ("\nQuestion:", "\nSupporting notes:", "\nSources:", "\nNext action:"):
-        if marker in cleaned:
-            cleaned = cleaned.split(marker, 1)[0].strip()
-    return cleaned
 
 
 def _extractive_answer(results: list[SearchResult]) -> str:

@@ -4,6 +4,16 @@ Phase 1 MVP with Phase 2 note metadata and search inspection for a CLI-first, lo
 
 The core Phase 1 path is fully local: index Markdown notes, search them with SQLite FTS5, answer from retrieved notes, run registered Python tools through `uv`, and log actions locally. Optional model-backed commands are available, but the assistant works without a configured model or remote provider.
 
+## Table Of Contents
+
+- [Install](#install)
+- [Development Environment](#development-environment)
+- [Usage](#usage)
+- [Tool Usage](#tool-usage)
+- [Configuration](#configuration)
+- [Data](#data)
+- [Tests](#tests)
+
 ## Install
 
 Requires Python 3.10 or newer.
@@ -46,17 +56,29 @@ uv run assistant search "project alpha" --limit 10 --tag business --path project
 uv run assistant show 42
 ```
 
-Ask a question using retrieved notes only. If `ASSISTANT_LLAMA_MODEL_PATH` points to a local GGUF model,
-the answer is synthesized with llama.cpp; otherwise it falls back to an extractive answer:
+Ask a question using retrieved notes. If a local provider is configured, the answer is synthesized with
+that provider; otherwise it falls back to an extractive answer:
 
 ```bash
 uv run assistant ask "What did I decide about search?"
+```
+
+Use a specific configured local provider for one request:
+
+```bash
+uv run assistant ask "What did I decide about search?" --model-provider llama-cpp-python
 ```
 
 Skip model synthesis even when a model is configured:
 
 ```bash
 uv run assistant ask "What did I decide about search?" --no-model
+```
+
+Fail instead of falling back when no local provider is configured:
+
+```bash
+uv run assistant ask "What did I decide about search?" --model-required
 ```
 
 Optional extension: research a question using local notes first, with optional remote escalation when configured:
@@ -170,10 +192,17 @@ Environment variables:
 - `ASSISTANT_LLM_SUMMARY_PATH`: saved last LLM request summary path, defaults to `last-llm-request.md` under `ASSISTANT_HOME`
 - `ASSISTANT_RESEARCH_DIR`: stored research markdown directory, defaults to `research` under `ASSISTANT_NOTES_DIR`
 - `ASSISTANT_HOME`: base directory for default local state
-- `ASSISTANT_LLAMA_MODEL_PATH`: optional path to a local GGUF model for `assistant ask`
-- `ASSISTANT_LLAMA_CONTEXT_SIZE`: llama.cpp context window, defaults to `4096`
-- `ASSISTANT_LLAMA_MAX_TOKENS`: max generated answer tokens, defaults to `256`
-- `ASSISTANT_LLAMA_TEMPERATURE`: generation temperature, defaults to `0.2`
+- `ASSISTANT_LOCAL_PROVIDER`: optional local provider, currently `llama-cpp-python` or `llama.cpp-server`
+- `ASSISTANT_LOCAL_MODEL`: local model path for `llama-cpp-python`, or model name for server providers
+- `ASSISTANT_LOCAL_CONTEXT_SIZE`: local context window, defaults to `4096`
+- `ASSISTANT_LOCAL_MAX_TOKENS`: max generated answer tokens, defaults to `256`
+- `ASSISTANT_LOCAL_TEMPERATURE`: generation temperature, defaults to `0.2`
+- `ASSISTANT_LOCAL_BASE_URL`: local HTTP provider base URL, defaults to `http://127.0.0.1:8080` for `llama.cpp-server`
+- `ASSISTANT_LOCAL_TIMEOUT`: local HTTP provider timeout in seconds, defaults to `30`
+- `ASSISTANT_LLAMA_MODEL_PATH`: compatibility alias for `ASSISTANT_LOCAL_MODEL` with `llama-cpp-python`
+- `ASSISTANT_LLAMA_CONTEXT_SIZE`: compatibility alias for `ASSISTANT_LOCAL_CONTEXT_SIZE`
+- `ASSISTANT_LLAMA_MAX_TOKENS`: compatibility alias for `ASSISTANT_LOCAL_MAX_TOKENS`
+- `ASSISTANT_LLAMA_TEMPERATURE`: compatibility alias for `ASSISTANT_LOCAL_TEMPERATURE`
 - `ASSISTANT_REMOTE_PROVIDER`: optional remote provider, currently `openai-compatible`
 - `ASSISTANT_REMOTE_MODEL`: optional remote model for `assistant research`
 - `ASSISTANT_REMOTE_API_KEY`: optional remote provider API key

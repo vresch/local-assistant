@@ -6,6 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import assistant.cli as cli
+from assistant.providers.local import LocalModelResponse
 from assistant.tools.runner import ToolResult
 
 
@@ -90,7 +91,7 @@ Avoid remote LLM calls in phase one.
     assert [run[1] for run in runs] == ["notes.index", "notes.search", "notes.show", "local_answer"]
     assert all(run[2] == "succeeded" for run in runs)
     assert runs[1][3] == "results=1 llm=none model=none reason=search_only"
-    assert runs[3][3] == "results=2 llm=none model=none local_model_used=False"
+    assert runs[3][3] == "results=2 llm=none model=none local_model_requested=False local_model_used=False"
     assert [chunk[0] for chunk in chunks] == ["Project Alpha", "Decision"]
     assert search_events == [("llm", "llm=none model=none reason=search_only")]
     assert [event[0] for event in ask_events] == [
@@ -104,8 +105,11 @@ Avoid remote LLM calls in phase one.
     assert "search*" in ask_events[0][1]
     assert "project.md" in ask_events[1][1]
     assert "Project Alpha" in ask_events[1][1]
-    assert ask_events[2][1] == "llm=none model=none"
-    assert ask_events[3][1] == "llm=none model=none local_model_used=False"
+    assert ask_events[2][1] == "llm=none model=none local_provider=none"
+    assert ask_events[3][1] == (
+        "llm=none model=none local_model_requested=False local_model_used=False "
+        "prompt_chunks=2 prompt_chars=0 fallback=extractive"
+    )
     assert "The strongest matching note says" in ask_events[4][1]
 
     debug_log = debug_log_path.read_text(encoding="utf-8")
@@ -148,12 +152,21 @@ def test_cli_ask_handles_empty_results_and_no_model_flag(tmp_path: Path) -> None
             (2,),
         ).fetchall()
 
-    assert run == ("ask", "local_answer", "succeeded", "results=0 llm=none model=none local_model_used=False")
+    assert run == (
+        "ask",
+        "local_answer",
+        "succeeded",
+        "results=0 llm=none model=none local_model_requested=False local_model_used=False",
+    )
     assert events == [
         ("normalized_query", "banana* OR telescope*"),
         ("retrieved_sources", "none"),
-        ("llm", "llm=none model=none"),
-        ("synthesis", "llm=none model=none local_model_used=False"),
+        ("llm", "llm=none model=none local_provider=none"),
+        (
+            "synthesis",
+            "llm=none model=none local_model_requested=False local_model_used=False "
+            "prompt_chunks=0 prompt_chars=0 fallback=extractive",
+        ),
         ("answer", "I could not find relevant notes for that question."),
         ("answer_summary", "no relevant chunks found; local_model_requested=False"),
     ]
@@ -176,7 +189,7 @@ def test_cli_ask_alerts_when_configured_llm_model_path_is_invalid(tmp_path: Path
     result = runner.invoke(cli.app, ["ask", "What powers local search?"], env=env)
 
     assert result.exit_code == 1
-    assert f"Invalid LLM configuration: ASSISTANT_LLAMA_MODEL_PATH does not exist: {missing_model}" in result.output
+    assert f"Invalid local model configuration: ASSISTANT_LOCAL_MODEL does not exist: {missing_model}" in result.output
 
     with sqlite3.connect(db_path) as conn:
         run = conn.execute("SELECT command, route, status, summary FROM runs ORDER BY id DESC LIMIT 1").fetchone()
@@ -190,7 +203,7 @@ def test_cli_ask_alerts_when_configured_llm_model_path_is_invalid(tmp_path: Path
             (2,),
         ).fetchall()
 
-    expected_summary = f"invalid_llm_config ASSISTANT_LLAMA_MODEL_PATH does not exist: {missing_model}"
+    expected_summary = f"invalid_local_model_config ASSISTANT_LOCAL_MODEL does not exist: {missing_model}"
     assert run == ("ask", "local_answer", "failed", expected_summary)
     assert events == [("llm_config", expected_summary)]
 
@@ -211,8 +224,109 @@ def test_cli_ask_no_model_ignores_invalid_llm_model_path(tmp_path: Path) -> None
     result = runner.invoke(cli.app, ["ask", "What powers local search?", "--no-model"], env=env)
 
     assert result.exit_code == 0
-    assert "Invalid LLM configuration" not in result.output
+    assert "Invalid local model configuration" not in result.output
     assert "The strongest matching note says" in result.output
+
+
+def test_cli_ask_ignores_local_model_without_provider(tmp_path: Path) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "project.md").write_text("# Project\nSQLite FTS5 powers local search.", encoding="utf-8")
+    db_path = tmp_path / "assistant.db"
+    env = {
+        "ASSISTANT_NOTES_DIR": str(notes_dir),
+        "ASSISTANT_DB_PATH": str(db_path),
+        "ASSISTANT_DEBUG_LOG_PATH": str(tmp_path / "debug.log"),
+        "ASSISTANT_LOCAL_PROVIDER": "",
+        "ASSISTANT_LOCAL_MODEL": str(tmp_path / "missing.gguf"),
+        "ASSISTANT_LLAMA_MODEL_PATH": "",
+    }
+
+    assert runner.invoke(cli.app, ["index"], env=env).exit_code == 0
+    result = runner.invoke(cli.app, ["ask", "What powers local search?"], env=env)
+
+    assert result.exit_code == 0
+    assert "Invalid local model configuration" not in result.output
+    assert "The strongest matching note says" in result.output
+
+    with sqlite3.connect(db_path) as conn:
+        run = conn.execute("SELECT summary FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+        events = conn.execute("SELECT event_type, message FROM run_events WHERE run_id = 2 ORDER BY id").fetchall()
+
+    assert run[0] == "results=1 llm=none model=none local_model_requested=False local_model_used=False"
+    assert events[2] == ("llm", "llm=none model=none local_provider=none")
+
+
+def test_cli_ask_no_model_ignores_model_provider_override(tmp_path: Path) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "project.md").write_text("# Project\nSQLite FTS5 powers local search.", encoding="utf-8")
+    db_path = tmp_path / "assistant.db"
+    env = {
+        "ASSISTANT_NOTES_DIR": str(notes_dir),
+        "ASSISTANT_DB_PATH": str(db_path),
+        "ASSISTANT_DEBUG_LOG_PATH": str(tmp_path / "debug.log"),
+        "ASSISTANT_LOCAL_PROVIDER": "",
+        "ASSISTANT_LOCAL_MODEL": "",
+        "ASSISTANT_LLAMA_MODEL_PATH": "",
+    }
+
+    assert runner.invoke(cli.app, ["index"], env=env).exit_code == 0
+    result = runner.invoke(
+        cli.app,
+        ["ask", "What powers local search?", "--no-model", "--model-provider", "llama.cpp-server"],
+        env=env,
+    )
+
+    assert result.exit_code == 0
+
+    with sqlite3.connect(db_path) as conn:
+        events = conn.execute("SELECT event_type, message FROM run_events WHERE run_id = 2 ORDER BY id").fetchall()
+
+    assert events[2] == ("llm", "llm=none model=none local_provider=none")
+    assert "local_model_requested=False" in events[3][1]
+
+
+def test_cli_ask_configured_local_provider_logs_metadata(tmp_path: Path, monkeypatch) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "project.md").write_text("# Project\nSQLite FTS5 powers local search.", encoding="utf-8")
+    db_path = tmp_path / "assistant.db"
+    env = {
+        "ASSISTANT_NOTES_DIR": str(notes_dir),
+        "ASSISTANT_DB_PATH": str(db_path),
+        "ASSISTANT_DEBUG_LOG_PATH": str(tmp_path / "debug.log"),
+        "ASSISTANT_LOCAL_PROVIDER": "llama.cpp-server",
+        "ASSISTANT_LOCAL_MODEL": "local",
+    }
+
+    class FakeProvider:
+        provider_name = "fake-local"
+        model_name = "fake-model"
+
+        def complete(self, prompt: str) -> LocalModelResponse:
+            assert "SQLite FTS5 powers local search." in prompt
+            return LocalModelResponse(text="Use SQLite FTS5.", provider=self.provider_name, model=self.model_name)
+
+    monkeypatch.setattr(cli, "build_local_provider", lambda settings: FakeProvider())
+
+    assert runner.invoke(cli.app, ["index"], env=env).exit_code == 0
+    result = runner.invoke(cli.app, ["ask", "What powers local search?"], env=env)
+
+    assert result.exit_code == 0
+    assert "Use SQLite FTS5." in result.output
+
+    with sqlite3.connect(db_path) as conn:
+        run = conn.execute("SELECT summary FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+        events = conn.execute(
+            "SELECT event_type, message FROM run_events WHERE run_id = 2 ORDER BY id"
+        ).fetchall()
+
+    assert run[0] == "results=1 llm=fake-local model=fake-model local_model_requested=True local_model_used=True"
+    assert events[2] == ("llm", "llm=fake-local model=fake-model local_provider=llama.cpp-server")
+    assert "local_model_requested=True local_model_used=True" in events[3][1]
+    assert "prompt_chunks=1" in events[3][1]
+    assert "fallback=none" in events[3][1]
 
 
 def test_cli_categorise_notes_prints_and_logs_categories(tmp_path: Path) -> None:
