@@ -7,10 +7,11 @@ searched from the CLI, answered from retrieved notes, and every action is logged
 Optional model-backed commands exist, but the core workflow works without a configured
 LLM or remote provider.
 
-Current implementation status: Phases 1, 2, 4, and 5 are complete. The assistant now
+Current implementation status: Phases 1, 2, 4, 5, and 8 are complete. The assistant now
 has the local retrieval core, richer note metadata/search, controlled local tool
-execution, built-in workflow tools, and optional local LLM synthesis through configured
-local providers. Remote behavior remains disabled unless explicitly configured.
+execution, built-in workflow tools, optional local LLM synthesis through configured
+local providers, and a Textual workflow TUI. Remote behavior remains disabled unless
+explicitly configured.
 
 ## Contents
 
@@ -165,11 +166,39 @@ Open the read-only terminal dashboard:
 uv run assistant dashboard
 ```
 
-Open the Textual database browser:
+Open the Textual workflow TUI:
 
 ```bash
 uv run assistant ui
 ```
+
+The TUI keeps the CLI as the source of truth. It calls the same search, ask, tool,
+database, and logging functions used by CLI commands.
+
+TUI workflows:
+
+- `Search`: query indexed notes, filter by limit/tag/path/since, preview chunks, and add chunks to the selected source basket.
+- `Ask`: ask from local notes with the configured local model enabled by default, falling back to extractive answers when no local provider is configured; selected sources can be used explicitly.
+- `Sources`: inspect and clear the in-memory selected source basket.
+- `Tools`: inspect registered tools, dry-run commands, and run approved tools.
+- `Runs`: inspect recent command runs and their event timeline.
+- `Logs`: browse local events without making raw storage tables the primary workflow.
+- `Storage`: inspect raw indexed documents and chunks when needed.
+
+Useful keys:
+
+```text
+/       focus search input
+enter   preview selected item
+a       toggle selected search result in the source basket
+o       show full selected source
+r       refresh
+d       dry-run selected tool
+q       quit
+```
+
+Workflow-specific keys only act in their matching tab; for example, source selection
+keys are scoped to Search and tool dry-runs are scoped to Tools.
 
 Categorise indexed notes with local keyword rules:
 

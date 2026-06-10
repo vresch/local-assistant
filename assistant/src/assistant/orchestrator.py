@@ -4,7 +4,7 @@ import re
 import sqlite3
 from dataclasses import dataclass
 
-from assistant.notes.search import SearchResult, search_notes, to_fts_query
+from assistant.notes.search import SearchResult, get_chunk, search_notes, to_fts_query
 from assistant.providers.local import LocalModelProvider
 
 
@@ -29,9 +29,10 @@ def answer_question(
     limit: int = 5,
     local_provider: LocalModelProvider | None = None,
     use_model: bool = True,
+    chunk_ids: list[int] | None = None,
 ) -> AnswerResult:
     normalized_query = to_fts_query(question)
-    results = search_notes(conn, question, limit=limit)
+    results = _selected_chunks(conn, chunk_ids) if chunk_ids is not None else search_notes(conn, question, limit=limit)
     if not results:
         model_requested = use_model and local_provider is not None
         direct_answer = "I could not find relevant notes for that question."
@@ -65,7 +66,7 @@ def answer_question(
     supporting_notes = [_supporting_note(result) for result in results]
     model_requested = use_model and local_provider is not None
     prompt = _build_prompt(question, results) if model_requested else ""
-    if model_requested:
+    if model_requested and local_provider is not None:
         response = local_provider.complete(prompt)
         direct_answer = response.text or _extractive_answer(results)
         used_local_model = bool(response.text)
@@ -139,6 +140,21 @@ def _build_prompt(question: str, results: list[SearchResult]) -> str:
     )
 
 
+def _selected_chunks(conn: sqlite3.Connection, chunk_ids: list[int] | None) -> list[SearchResult]:
+    if not chunk_ids:
+        return []
+    results: list[SearchResult] = []
+    seen: set[int] = set()
+    for chunk_id in chunk_ids:
+        if chunk_id in seen:
+            continue
+        seen.add(chunk_id)
+        result = get_chunk(conn, chunk_id)
+        if result is not None:
+            results.append(result)
+    return results
+
+
 def _extractive_answer(results: list[SearchResult]) -> str:
     top_excerpt = _source_excerpt(results[0])
     if len(results) == 1:
@@ -182,7 +198,11 @@ def _grouped_sources(results: list[SearchResult]) -> list[str]:
     for path, path_results in grouped.items():
         title = path_results[0].title
         chunks = ", ".join(f"chunk {result.chunk_index + 1}" for result in path_results)
-        headings = [result.heading_path or result.heading for result in path_results if result.heading_path or result.heading]
+        headings = [
+            heading
+            for heading in (result.heading_path or result.heading for result in path_results)
+            if heading is not None
+        ]
         heading_text = f" - {'; '.join(dict.fromkeys(headings))}" if headings else ""
         sources.append(f"{path} - {title}{heading_text} - {chunks}")
     return sources

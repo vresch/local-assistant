@@ -131,3 +131,44 @@ def test_answer_question_synthesizes_multiple_business_ideas_without_model(tmp_p
     assert "paid newsletter business" in answer.answer.lower()
     assert "design studio business" in answer.answer.lower()
     assert "podcast" not in answer.answer.lower()
+
+
+def test_answer_question_can_use_explicit_chunk_ids(tmp_path: Path) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    selected = notes_dir / "selected.md"
+    ignored = notes_dir / "ignored.md"
+    selected.write_text("# Selected\nThe chosen source says use explicit chunks.", encoding="utf-8")
+    ignored.write_text("# Ignored\nThe ignored source says use normal retrieval.", encoding="utf-8")
+
+    with connect(tmp_path / "assistant.db") as conn:
+        index_notes(conn, notes_dir)
+        selected_id = conn.execute(
+            """
+            SELECT chunks.id
+            FROM chunks
+            JOIN documents ON documents.id = chunks.document_id
+            WHERE documents.path = ?
+            """,
+            (str(selected),),
+        ).fetchone()[0]
+        answer = answer_question(conn, "normal retrieval", use_model=False, chunk_ids=[selected_id])
+
+    assert len(answer.results) == 1
+    assert answer.results[0].path == str(selected)
+    assert "explicit chunks" in answer.answer
+    assert "normal retrieval" not in answer.answer
+
+
+def test_answer_question_empty_explicit_chunk_ids_do_not_fall_back_to_search(tmp_path: Path) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "project.md").write_text("# Project\nSQLite FTS5 powers local note search.", encoding="utf-8")
+
+    with connect(tmp_path / "assistant.db") as conn:
+        index_notes(conn, notes_dir)
+        answer = answer_question(conn, "SQLite FTS5", use_model=False, chunk_ids=[])
+
+    assert answer.results == []
+    assert answer.sources == []
+    assert answer.answer == "I could not find relevant notes for that question."
