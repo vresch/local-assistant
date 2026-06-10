@@ -140,6 +140,24 @@ Internally:
 uv run ...
 ```
 
+Phase 4 extends tools with a v2 manifest while keeping the registry-to-runner shape:
+
+```yaml
+tools:
+  report:
+    command: ["python", "tools/report.py"]
+    risk: medium
+    permissions: ["read"]
+    timeout_seconds: 60
+    args:
+      - name: month
+        type: str
+        required: true
+        flag: "--month"
+```
+
+Tool args are passed as `assistant run <tool> --arg name=value`. The CLI validates and renders them into the command list in manifest order. `--dry-run` prints and logs the resolved command without executing. `--approve` is required for medium/high risk tools or any tool with `requires_approval: true`.
+
 ### Assistant-First Design
 
 The assistant is the product. LLMs are reasoning engines used by the assistant, not the foundation of the system.
@@ -830,15 +848,39 @@ Phase 2 is complete when:
 
 #### Phase 4: Tooling Layer
 
-Possible work:
+Status: implemented for the local Phase 4 core.
 
-* Define a tool manifest format.
-* Add tool arguments and validation.
-* Add dry-run mode.
-* Add tool permission categories: read-only, write, shell, network.
-* Improve `assistant run <tool> --arg value`.
-* Log structured tool results.
-* Add built-in tools for note creation, daily-note append, file search, and project inspection.
+Phase 4 extends the existing registry-to-runner path rather than replacing it:
+
+```text
+YAML registry -> ToolSpec -> validated command list -> run_tool() -> local logs
+```
+
+Implemented behavior:
+
+* Tool manifests support `risk`, `permissions`, typed `args`, `timeout_seconds`, and `working_dir`.
+* Registry loading remains backwards compatible with old command-only tool entries.
+* Registry validation rejects unknown risks, unknown permissions, invalid args, invalid tool names, and duplicate list entries.
+* `assistant run <tool> --arg name=value` parses and validates typed arguments.
+* Args render into the command list in manifest order without shell interpolation.
+* `assistant run <tool> --dry-run` prints the resolved command, risk, permissions, and approval requirement without executing.
+* `assistant run <tool> --approve` explicitly authorizes medium/high risk tools and tools with `requires_approval: true`.
+* The runner captures stdout, stderr, return code, duration, timeout status, structured JSON output, and artifacts.
+* Tool run logs include tool name, resolved command, args, dry-run vs execution, risk, permissions, approval result, return code, duration, structured summary, and artifacts.
+
+Default built-in tools:
+
+* `note-create`: create a Markdown note under `ASSISTANT_NOTES_DIR`; medium risk.
+* `note-append-daily`: append a bullet to a daily note; medium risk.
+* `file-search`: find files by local filename pattern; low risk.
+* `project-inspect`: summarize basic project files from the current working directory; low risk.
+
+Safety constraints:
+
+* Commands and args must stay as `list[str]` through execution.
+* Tool args must never be converted into shell strings.
+* Write tools must confine writes to their configured local scope.
+* Remote behavior remains disabled unless explicitly configured elsewhere.
 
 #### Phase 5: Local LLM Support
 

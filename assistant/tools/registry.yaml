@@ -3,7 +3,81 @@ tools:
     description: Print a smoke-test message.
     command: ["python", "-c", "print('hello from assistant tool')"]
     requires_approval: false
+    risk: low
+    permissions: []
+    timeout_seconds: 10
   categorise-notes:
     description: Categorise indexed Markdown notes using local keyword rules.
     command: ["assistant", "categorise-notes"]
     requires_approval: false
+    risk: low
+    permissions: ["read"]
+    timeout_seconds: 60
+  note-create:
+    description: Create a Markdown note under the configured notes directory.
+    command: ["python", "-m", "assistant.tools.note_create"]
+    requires_approval: false
+    risk: medium
+    permissions: ["write"]
+    timeout_seconds: 30
+    args:
+      - name: path
+        type: path
+        required: true
+        flag: "--path"
+        description: Relative note path under ASSISTANT_NOTES_DIR.
+      - name: title
+        type: str
+        required: true
+        flag: "--title"
+        description: Markdown title.
+      - name: body
+        type: str
+        required: false
+        default: ""
+        flag: "--body"
+        description: Initial body text.
+  note-append-daily:
+    description: Append a bullet to a daily Markdown note.
+    command: ["python", "-m", "assistant.tools.note_append_daily"]
+    requires_approval: false
+    risk: medium
+    permissions: ["write"]
+    timeout_seconds: 30
+    args:
+      - name: date
+        type: str
+        required: false
+        flag: "--date"
+        description: Daily note date in YYYY-MM-DD format.
+      - name: text
+        type: str
+        required: true
+        flag: "--text"
+        description: Bullet text to append.
+  file-search:
+    description: Find files by name pattern from a local root.
+    command: ["python", "-m", "assistant.tools.file_search"]
+    requires_approval: false
+    risk: low
+    permissions: ["read"]
+    timeout_seconds: 30
+    args:
+      - name: pattern
+        type: str
+        required: true
+        flag: "--pattern"
+        description: Filename pattern such as *.md.
+      - name: root
+        type: path
+        required: false
+        default: "."
+        flag: "--root"
+        description: Root directory to search.
+  project-inspect:
+    description: Summarise basic project files from the current working directory.
+    command: ["python", "-m", "assistant.tools.project_inspect"]
+    requires_approval: false
+    risk: low
+    permissions: ["read"]
+    timeout_seconds: 30

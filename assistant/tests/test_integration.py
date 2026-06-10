@@ -346,15 +346,18 @@ tools:
         "ASSISTANT_REGISTRY_PATH": str(registry_path),
     }
 
-    def fake_run_tool(tool):
-        assert tool.command == ["python", "-c", "print('sample output')"]
+    def fake_run_tool(tool, command=None, cwd=None, timeout_seconds=None):
+        assert command == ["python", "-c", "print('sample output')"]
+        assert cwd is None
+        assert timeout_seconds == 60
         return ToolResult(
             tool_name=tool.name,
-            command=["uv", "run", *tool.command],
+            command=["uv", "run", *command],
             returncode=0,
             stdout="sample output\n",
             stderr="",
             requires_approval=tool.requires_approval,
+            duration_ms=7,
         )
 
     monkeypatch.setattr(cli, "run_tool", fake_run_tool)
@@ -372,9 +375,15 @@ tools:
         "sample",
         "tools.run",
         "succeeded",
-        "tool=sample status=succeeded returncode=0",
+        "tool=sample status=succeeded returncode=0 duration_ms=7 timed_out=false",
     )
-    assert events == [("tool", "tool=sample status=succeeded returncode=0")]
+    assert len(events) == 1
+    assert events[0][0] == "tool"
+    assert "tool=sample" in events[0][1]
+    assert "command=python -c 'print('\"'\"'sample output'\"'\"')'" in events[0][1]
+    assert "risk=low" in events[0][1]
+    assert "approved=false" in events[0][1]
+    assert "returncode=0" in events[0][1]
 
 
 def test_cli_run_blocks_tools_that_require_approval(tmp_path: Path, monkeypatch) -> None:
@@ -395,14 +404,14 @@ tools:
         "ASSISTANT_REGISTRY_PATH": str(registry_path),
     }
 
-    def fail_run_tool(tool):
+    def fail_run_tool(tool, command=None, cwd=None, timeout_seconds=None):
         raise AssertionError("approval-required tools must not execute")
 
     monkeypatch.setattr(cli, "run_tool", fail_run_tool)
 
     result = runner.invoke(cli.app, ["run", "sample"], env=env)
     assert result.exit_code == 1
-    assert "tool=sample blocked approval_required=true" in result.output
+    assert "tool=sample blocked approval_required=true risk=low" in result.output
 
     with sqlite3.connect(db_path) as conn:
         run = conn.execute("SELECT command, input, route, status, summary FROM runs").fetchone()
@@ -413,9 +422,178 @@ tools:
         "sample",
         "tools.run",
         "failed",
-        "tool=sample blocked approval_required=true",
+        "tool=sample blocked approval_required=true risk=low",
     )
-    assert events == [("approval_required", "execution blocked; interactive approval not implemented")]
+    assert len(events) == 1
+    assert events[0][0] == "approval_required"
+    assert "tool=sample" in events[0][1]
+    assert "requires_approval=true" in events[0][1]
+
+
+def test_cli_run_supports_args_dry_run_and_logs_metadata(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "assistant.db"
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(
+        """
+tools:
+  sample:
+    description: Sample integration tool.
+    command: ["python", "tool.py"]
+    risk: low
+    permissions: ["read"]
+    args:
+      - name: month
+        type: str
+        required: true
+        flag: "--month"
+""".strip(),
+        encoding="utf-8",
+    )
+    env = {
+        "ASSISTANT_DB_PATH": str(db_path),
+        "ASSISTANT_REGISTRY_PATH": str(registry_path),
+    }
+
+    def fail_run_tool(tool, command=None, cwd=None, timeout_seconds=None):
+        raise AssertionError("dry-run must not execute")
+
+    monkeypatch.setattr(cli, "run_tool", fail_run_tool)
+
+    result = runner.invoke(cli.app, ["run", "sample", "--arg", "month=2026-06", "--dry-run"], env=env)
+
+    assert result.exit_code == 0
+    assert "tool=sample" in result.output
+    assert "command=python tool.py --month 2026-06" in result.output
+    assert "risk=low" in result.output
+    assert "permissions=read" in result.output
+    assert "requires_approval=false" in result.output
+
+    with sqlite3.connect(db_path) as conn:
+        run = conn.execute("SELECT command, input, route, status, summary FROM runs").fetchone()
+        events = conn.execute("SELECT event_type, message FROM run_events ORDER BY id").fetchall()
+
+    assert run == (
+        "run",
+        "sample --arg month=2026-06 --dry-run",
+        "tools.run",
+        "succeeded",
+        "tool=sample dry_run=true approval_required=false",
+    )
+    assert events[0][0] == "dry_run"
+    assert "args=month=2026-06" in events[0][1]
+
+
+def test_cli_run_blocks_medium_risk_without_approve_and_executes_with_approve(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "assistant.db"
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(
+        """
+tools:
+  sample:
+    command: ["python", "tool.py"]
+    risk: medium
+    permissions: ["write"]
+    args:
+      - name: x
+        type: str
+        required: true
+        flag: "--x"
+""".strip(),
+        encoding="utf-8",
+    )
+    env = {
+        "ASSISTANT_DB_PATH": str(db_path),
+        "ASSISTANT_REGISTRY_PATH": str(registry_path),
+    }
+    calls = []
+
+    def fake_run_tool(tool, command=None, cwd=None, timeout_seconds=None):
+        calls.append(command)
+        return ToolResult(
+            tool_name=tool.name,
+            command=["uv", "run", *command],
+            returncode=0,
+            stdout="ok\n",
+            stderr="",
+            requires_approval=tool.requires_approval,
+            duration_ms=3,
+            structured_output={"status": "succeeded", "summary": "ok", "artifacts": ["artifact.txt"]},
+            artifacts=("artifact.txt",),
+        )
+
+    monkeypatch.setattr(cli, "run_tool", fake_run_tool)
+
+    blocked = runner.invoke(cli.app, ["run", "sample", "--arg", "x=y"], env=env)
+    approved = runner.invoke(cli.app, ["run", "sample", "--arg", "x=y", "--approve"], env=env)
+
+    assert blocked.exit_code == 1
+    assert "approval_required=true risk=medium" in blocked.output
+    assert approved.exit_code == 0
+    assert "ok" in approved.output
+    assert calls == [["python", "tool.py", "--x", "y"]]
+
+    with sqlite3.connect(db_path) as conn:
+        runs = conn.execute("SELECT status, summary FROM runs ORDER BY id").fetchall()
+        events = conn.execute("SELECT event_type, message FROM run_events ORDER BY id").fetchall()
+
+    assert runs[0] == ("failed", "tool=sample blocked approval_required=true risk=medium")
+    assert runs[1] == ("succeeded", "tool=sample status=succeeded returncode=0 duration_ms=3 timed_out=false")
+    assert events[0][0] == "approval_required"
+    assert events[1][0] == "tool"
+    assert "approved=true" in events[1][1]
+    assert events[2] == ("structured_summary", "ok")
+    assert events[3] == ("artifacts", "artifact.txt")
+
+
+def test_cli_run_note_create_confines_paths_with_real_runner(tmp_path: Path) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    db_path = tmp_path / "assistant.db"
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(
+        """
+tools:
+  note-create:
+    command: ["python", "-m", "assistant.tools.note_create"]
+    risk: medium
+    permissions: ["write"]
+    args:
+      - name: path
+        type: path
+        required: true
+        flag: "--path"
+      - name: title
+        type: str
+        required: true
+        flag: "--title"
+""".strip(),
+        encoding="utf-8",
+    )
+    env = {
+        "ASSISTANT_NOTES_DIR": str(notes_dir),
+        "ASSISTANT_DB_PATH": str(db_path),
+        "ASSISTANT_REGISTRY_PATH": str(registry_path),
+    }
+
+    created = runner.invoke(
+        cli.app,
+        ["run", "note-create", "--arg", "path=inbox/idea", "--arg", "title=Idea", "--approve"],
+        env=env,
+    )
+    escaped = runner.invoke(
+        cli.app,
+        ["run", "note-create", "--arg", f"path={tmp_path / 'outside'}", "--arg", "title=Bad", "--approve"],
+        env=env,
+    )
+
+    assert created.exit_code == 0
+    assert (notes_dir / "inbox" / "idea.md").read_text(encoding="utf-8") == "# Idea\n"
+    assert escaped.exit_code == 1
+    assert "--path must be relative to ASSISTANT_NOTES_DIR" in escaped.output
+    assert not (tmp_path / "outside.md").exists()
 
 
 def test_cli_clean_db_removes_indexed_data_but_keeps_logs(tmp_path: Path) -> None:

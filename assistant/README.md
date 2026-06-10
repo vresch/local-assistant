@@ -96,23 +96,68 @@ Clear indexed data and old run logs:
 uv run assistant clean-db --include-logs
 ```
 
+## Tool Usage
+
+The tool layer is registry-driven and local-first:
+
+- Tool definitions live in `tools/registry.yaml`.
+- Commands are stored and executed as `list[str]`, not shell strings.
+- `assistant run` validates manifest args before execution.
+- `--dry-run` shows the resolved command, risk, permissions, and approval requirement without running it.
+- Medium/high risk tools, and tools with `requires_approval: true`, require `--approve`.
+- Tool runs log the resolved command, args, risk, permissions, approval result, return code, duration, structured summary, and artifacts when available.
+
 Run a registered tool through `uv`:
 
 ```bash
 uv run assistant run hello
 ```
 
+Pass typed manifest arguments with repeated `--arg name=value` options:
+
+```bash
+uv run assistant run file-search --arg pattern=*.md --arg root=.
+```
+
+Preview the resolved command, risk, permissions, and approval requirement without executing:
+
+```bash
+uv run assistant run note-create --arg path=inbox/idea --arg title="Idea" --dry-run
+```
+
+Medium/high risk tools and tools with `requires_approval: true` require explicit approval:
+
+```bash
+uv run assistant run note-create --arg path=inbox/idea --arg title="Idea" --approve
+```
+
 Tools are loaded from `tools/registry.yaml` by default:
 
 ```yaml
 tools:
-  hello:
-    description: Print a smoke-test message.
-    command: ["python", "-c", "print('hello from assistant tool')"]
+  report:
+    description: Generate a local report.
+    command: ["python", "-m", "assistant.tools.project_inspect"]
     requires_approval: false
+    risk: low
+    permissions: ["read"]
+    timeout_seconds: 30
+    args:
+      - name: month
+        type: str
+        required: false
+        flag: "--month"
+        description: Month to report, formatted as YYYY-MM.
 ```
 
-Tools with `requires_approval: true` are blocked because interactive approval is not implemented in Phase 1.
+Tool manifests support `risk`, `permissions`, typed `args`, `timeout_seconds`, and `working_dir`. Commands and rendered args remain lists and are executed without shell interpolation.
+
+Built-in tools included in the default registry:
+
+- `note-create`: create a Markdown note under `ASSISTANT_NOTES_DIR`; medium risk, requires `--approve`.
+- `note-append-daily`: append a bullet to `daily/YYYY-MM-DD.md`; medium risk, requires `--approve`.
+- `file-search`: find files by pattern from a local root; low risk.
+- `project-inspect`: summarize basic project files from the current working directory; low risk.
 
 ## Configuration
 

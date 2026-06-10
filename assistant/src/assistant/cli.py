@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from pathlib import Path
+import shlex
 
 import typer
 from rich.console import Console
@@ -19,7 +20,7 @@ from assistant.notes.search import SearchResult, get_chunk, search_notes
 from assistant.orchestrator import answer_question
 from assistant.providers.remote import build_remote_provider
 from assistant.research import research_question
-from assistant.tools.registry import load_registry
+from assistant.tools.registry import ToolSpec, build_command, load_registry
 from assistant.tools.runner import run_tool
 from assistant.ui import run_ui
 
@@ -390,39 +391,73 @@ def clean_db(include_logs: bool = False) -> None:
 
 
 @app.command()
-def run(tool_name: str) -> None:
+def run(
+    tool_name: str,
+    arg_values: list[str] = typer.Option([], "--arg", help="Tool argument as name=value."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate and print the resolved command without executing."),
+    approve: bool = typer.Option(False, "--approve", help="Approve medium/high risk or approval-required tools."),
+) -> None:
     """Run a registered local tool through uv."""
     settings = get_settings()
     debug = get_debug_logger(settings.debug_log_path)
     debug.info(
-        "command=run tool_name=%r db_path=%s registry_path=%s",
+        "command=run tool_name=%r dry_run=%s approve=%s db_path=%s registry_path=%s",
         tool_name,
+        dry_run,
+        approve,
         settings.db_path,
         settings.registry_path,
     )
     exit_code = 0
     with connect(settings.db_path) as conn:
-        run_id = start_run(conn, "run", tool_name, "tools.run")
+        parsed_args = _parse_tool_arg_values(arg_values)
+        run_input = _tool_run_input(tool_name, parsed_args, dry_run=dry_run, approve=approve)
+        run_id = start_run(conn, "run", run_input, "tools.run")
         try:
             registry = load_registry(settings.registry_path)
             tool = registry.get(tool_name)
             if tool is None:
                 known = ", ".join(sorted(registry)) or "none"
                 raise typer.BadParameter(f"unknown tool {tool_name!r}; known tools: {known}")
-            if tool.requires_approval:
-                summary = f"tool={tool.name} blocked approval_required=true"
-                log_event(conn, run_id, "approval_required", "execution blocked; interactive approval not implemented")
+            resolved_command = build_command(tool, parsed_args)
+            cwd = _tool_working_dir(tool)
+            approval_required = _tool_requires_approval(tool)
+            metadata = _tool_metadata(tool, resolved_command, parsed_args, dry_run=dry_run, approve=approve)
+            if dry_run:
+                console.print(_dry_run_text(tool, resolved_command, approval_required))
+                summary = f"tool={tool.name} dry_run=true approval_required={str(approval_required).lower()}"
+                log_event(conn, run_id, "dry_run", metadata)
+                finish_run(conn, run_id, "succeeded", summary)
+                debug.info("command=run run_id=%s %s", run_id, summary)
+                return
+            if approval_required and not approve:
+                summary = f"tool={tool.name} blocked approval_required=true risk={tool.risk}"
+                log_event(conn, run_id, "approval_required", metadata)
                 finish_run(conn, run_id, "failed", summary)
                 debug.info("command=run run_id=%s %s", run_id, summary)
                 err_console.print(summary)
                 raise typer.Exit(1)
-            result = run_tool(tool)
+            result = run_tool(
+                tool,
+                command=resolved_command,
+                cwd=cwd,
+                timeout_seconds=tool.timeout_seconds,
+            )
             if result.stdout:
                 console.print(result.stdout, end="")
             if result.stderr:
                 err_console.print(result.stderr, end="")
-            summary = f"tool={tool.name} status={result.status} returncode={result.returncode}"
-            log_event(conn, run_id, "tool", summary)
+            summary = (
+                f"tool={tool.name} status={result.status} returncode={result.returncode} "
+                f"duration_ms={result.duration_ms} timed_out={str(result.timed_out).lower()}"
+            )
+            log_event(conn, run_id, "tool", f"{metadata} {summary}")
+            if result.structured_output:
+                structured_summary = str(result.structured_output.get("summary", ""))
+                if structured_summary:
+                    log_event(conn, run_id, "structured_summary", structured_summary)
+            if result.artifacts:
+                log_event(conn, run_id, "artifacts", "\n".join(result.artifacts))
             finish_run(conn, run_id, result.status, summary)
             debug.info("command=run run_id=%s %s", run_id, summary)
             exit_code = result.returncode
@@ -433,6 +468,71 @@ def run(tool_name: str) -> None:
             debug.exception("command=run status=failed run_id=%s tool_name=%r", run_id, tool_name)
             raise
     raise typer.Exit(exit_code)
+
+
+def _parse_tool_arg_values(values: list[str]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise typer.BadParameter(f"--arg must be name=value, got {value!r}")
+        name, raw_value = value.split("=", 1)
+        if not name:
+            raise typer.BadParameter("--arg name cannot be empty")
+        parsed[name] = raw_value
+    return parsed
+
+
+def _tool_requires_approval(tool: ToolSpec) -> bool:
+    return tool.requires_approval or tool.risk in {"medium", "high"}
+
+
+def _tool_working_dir(tool: ToolSpec) -> Path | None:
+    if tool.working_dir is None:
+        return None
+    path = Path(tool.working_dir).expanduser()
+    if path.is_absolute():
+        return path
+    return Path.cwd() / path
+
+
+def _dry_run_text(tool: ToolSpec, command: list[str], approval_required: bool) -> str:
+    return "\n".join(
+        [
+            f"tool={tool.name}",
+            f"command={shlex.join(command)}",
+            f"risk={tool.risk}",
+            f"permissions={','.join(tool.permissions) or 'none'}",
+            f"requires_approval={str(approval_required).lower()}",
+        ]
+    )
+
+
+def _tool_metadata(
+    tool: ToolSpec,
+    command: list[str],
+    args: dict[str, str],
+    *,
+    dry_run: bool,
+    approve: bool,
+) -> str:
+    rendered_args = ",".join(f"{name}={args[name]}" for name in sorted(args)) or "none"
+    return (
+        f"tool={tool.name} command={shlex.join(command)} dry_run={str(dry_run).lower()} "
+        f"args={rendered_args} risk={tool.risk} permissions={','.join(tool.permissions) or 'none'} "
+        f"requires_approval={str(_tool_requires_approval(tool)).lower()} approved={str(approve).lower()}"
+    )
+
+
+def _tool_run_input(tool_name: str, args: dict[str, str], *, dry_run: bool, approve: bool) -> str:
+    rendered_args = " ".join(f"--arg {name}={args[name]}" for name in sorted(args))
+    parts = [tool_name]
+    if rendered_args:
+        parts.append(rendered_args)
+    if dry_run:
+        parts.append("--dry-run")
+    if approve:
+        parts.append("--approve")
+    return " ".join(parts)
 
 
 def _print_results(results: list[SearchResult]) -> None:
