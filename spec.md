@@ -707,10 +707,10 @@ Recommended order:
 
 | Order | Phase | Initial Status | Outcome |
 | --- | --- | --- | --- |
-| 1 | Phase 1: Local Retrieval CLI | `active` | Build the local index/search/ask/run/log core. |
-| 2 | Phase 2: Better Local Knowledge Quality | `planned` | Improve retrieval quality and source usefulness. |
-| 3 | Phase 4: Tooling Layer | `planned` | Make local tool execution controlled and practical. |
-| 4 | Phase 5: Local LLM Support | `planned` | Add optional local generation after deterministic behavior works. |
+| 1 | Phase 1: Local Retrieval CLI | `done` | Build the local index/search/ask/run/log core. |
+| 2 | Phase 2: Better Local Knowledge Quality | `done` | Improve retrieval quality and source usefulness. |
+| 3 | Phase 4: Tooling Layer | `done` | Make local tool execution controlled and practical. |
+| 4 | Phase 5: Local LLM Support | `done` | Add optional local generation after deterministic behavior works. |
 | 5 | Phase 3: Assistant Memory And Task State | `proposed` | Add lightweight local state across sessions. |
 | 6 | Phase 6: Note Workflows | `proposed` | Add practical note operations. |
 | 7 | Phase 7: Project-Aware Mode | `proposed` | Extend indexing/search to local project folders. |
@@ -933,14 +933,30 @@ Safety constraints:
 
 #### Phase 5: Local LLM Support
 
-Possible work:
+Status: implemented for the local Phase 5 core.
 
-* Add a stable model-provider adapter.
-* Support local providers such as Ollama, `llama.cpp` server, or MLX.
-* Configure the default local model in local config.
-* Keep deterministic fallback behavior when no model is configured.
-* Test prompt templates separately.
-* Keep `assistant search` and extractive `assistant ask` usable without a model.
+Phase 5 adds optional local model synthesis while keeping deterministic local behavior as the default fallback.
+
+Implemented behavior:
+
+* A stable local provider interface exists behind `assistant.providers.local`.
+* `assistant ask` can use a configured local model provider for note-grounded synthesis.
+* Supported local providers are `llama-cpp-python` and `llama.cpp-server`.
+* Local provider settings are configured with `ASSISTANT_LOCAL_PROVIDER`, `ASSISTANT_LOCAL_MODEL`, context size, max tokens, temperature, base URL, and timeout.
+* Older `ASSISTANT_LLAMA_*` settings remain compatibility aliases for the in-process `llama-cpp-python` provider.
+* `assistant ask --no-model` always forces extractive local-note answers.
+* `assistant ask --model-provider <provider>` can select a local provider for one request.
+* `assistant ask --model-required` fails fast when a valid local provider is not configured.
+* `assistant search` remains purely SQLite/FTS and never requires a model.
+* Local model usage, model name, fallback behavior, prompt chunk count, and prompt character count are logged.
+* Tests cover provider request/response handling, missing model files, missing dependencies, and local provider prompt behavior.
+
+Safety constraints:
+
+* Remote models are not used by `assistant ask`.
+* If no local model is configured, `assistant ask` still returns an extractive answer from retrieved notes.
+* If retrieved notes are insufficient, the assistant must say so directly instead of inventing details.
+* Local model prompts must be grounded in retrieved note chunks and include source-aware context.
 
 #### Phase 3: Assistant Memory And Task State
 
