@@ -228,6 +228,25 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(
 );
 ```
 
+### Phase 2 Metadata Extensions
+
+Phase 2 may extend the core tables instead of replacing them.
+
+Suggested additions:
+
+```sql
+ALTER TABLE documents ADD COLUMN file_size INTEGER;
+ALTER TABLE documents ADD COLUMN indexed_at TEXT;
+ALTER TABLE documents ADD COLUMN tags_json TEXT;
+
+ALTER TABLE chunks ADD COLUMN heading_path TEXT;
+ALTER TABLE chunks ADD COLUMN token_count INTEGER;
+ALTER TABLE chunks ADD COLUMN start_line INTEGER;
+ALTER TABLE chunks ADD COLUMN end_line INTEGER;
+```
+
+These fields support better ranking, filtering, source display, and incremental indexing while keeping SQLite + FTS5 as the retrieval system.
+
 ### Logging Tables
 
 ```sql
@@ -640,14 +659,167 @@ See the Phase 1 contract above.
 
 #### Phase 2: Better Local Knowledge Quality
 
-Possible work:
+Goal:
+
+Make local search and `assistant ask` more trustworthy, explainable, and efficient without introducing vector search, background workers, or remote dependencies.
+
+Phase 2 should improve the existing retrieval system rather than change the assistant's architecture.
+
+##### Scope
+
+Must have:
 
 * Add richer chunk metadata: title, heading path, tags, modified time.
-* Improve ranking with FTS/BM25 tuning, exact-title matches, and optional recency boost.
-* Add search filters such as `--tag`, `--path`, `--since`, and `--limit`.
+* Improve ranking with FTS/BM25, exact-title matches, heading matches, and optional recency boost.
+* Add search filters: `--tag`, `--path`, `--since`, and `--limit`.
 * Reindex only changed files.
 * Show source citations consistently in `assistant ask`.
-* Add result inspection commands such as `assistant show <result-id>` or `assistant open <note>`.
+* Add result inspection commands: `assistant show <result-id>` and/or `assistant open <note>`.
+* Add tests for metadata extraction, filtering, ranking, and incremental indexing.
+
+Should have:
+
+* Extract Markdown title from the first H1, then fall back to filename.
+* Track heading path for chunks, not only the nearest heading.
+* Extract simple tags from Markdown frontmatter and inline `#tag` tokens.
+* Preserve line ranges where practical for source display.
+* Make snippets stable and readable.
+
+Out of scope:
+
+* Vector embeddings.
+* Semantic rerankers.
+* Background indexing.
+* Cross-device sync.
+* Automatic note rewriting.
+* Assistant-generated long-term memory.
+* Remote LLM use for indexing or search.
+
+##### Data Model
+
+Phase 2 should keep the Phase 1 SQLite schema compatible and add metadata incrementally.
+
+Document metadata:
+
+* `title`
+* `path`
+* `modified_at`
+* `indexed_at`
+* `content_hash`
+* `file_size`
+* `tags_json`
+
+Chunk metadata:
+
+* `document_id`
+* `chunk_index`
+* `content`
+* `heading`
+* `heading_path`
+* `token_count`
+* `start_line`
+* `end_line`
+
+Tag storage can start as `tags_json` on `documents`. A normalized tag table is not required until filtering or reporting needs it.
+
+##### Indexing Behavior
+
+`assistant index` should become incremental.
+
+Rules:
+
+1. Discover Markdown files under the configured notes path.
+2. Compute each file's `content_hash`, `modified_at`, and `file_size`.
+3. Skip files whose stored hash and metadata are unchanged.
+4. Reindex files that are new or changed.
+5. Remove database records for deleted files.
+6. Update FTS rows atomically with chunk changes.
+7. Report indexed, skipped, removed, and failed counts.
+
+Expected output shape:
+
+```text
+Indexed notes:
+  New: 3
+  Updated: 12
+  Skipped: 1842
+  Removed: 1
+  Failed: 0
+```
+
+##### Search Behavior
+
+`assistant search` should support:
+
+```bash
+assistant search "query" --limit 10
+assistant search "query" --tag business
+assistant search "query" --path projects/sontera
+assistant search "query" --since 2026-01-01
+```
+
+Ranking inputs:
+
+* FTS5/BM25 score.
+* Exact title match boost.
+* Heading and heading-path match boost.
+* Optional recency boost based on `modified_at`.
+
+Ranking must remain deterministic and explainable. Search results should include enough information to understand why a result matched.
+
+Output shape:
+
+```text
+Found 7 results:
+
+1. ~/notes/business/sontera.md
+   Title: Sontera
+   Heading: Offers > Group Sessions
+   Modified: 2026-05-18
+   Tags: business, sound
+   Score: 12.4
+   Snippet: ...
+```
+
+##### Ask Behavior
+
+`assistant ask` should use the improved metadata in source citations.
+
+Rules:
+
+* Always show source paths when chunks are used.
+* Prefer title + heading path over raw filenames in the answer body.
+* Keep exact paths available in the `Sources` section.
+* If the same document contributes multiple chunks, group citations by document where readable.
+* Do not use metadata as evidence unless the chunk content supports the answer.
+
+##### Result Inspection
+
+Add at least one inspect/open command after search results become identifiable.
+
+Possible commands:
+
+```bash
+assistant show <result-id>
+assistant open <note>
+```
+
+`assistant show` should print the full chunk and metadata from the most recent search result set or a stable stored result reference.
+
+`assistant open` may open a note path using the local environment, but should be optional because opening GUI apps may require platform-specific handling.
+
+##### Acceptance Criteria
+
+Phase 2 is complete when:
+
+* Re-running `assistant index` skips unchanged files.
+* Changed and deleted notes are reflected correctly.
+* Search supports `--limit`, `--tag`, `--path`, and `--since`.
+* Search results include title, heading path, modified date, tags when available, and source path.
+* `assistant ask` citations are consistent and readable.
+* At least one result inspection command exists.
+* Tests cover metadata extraction, incremental indexing, filtering, ranking behavior, and citation formatting.
+* No remote service is required.
 
 #### Phase 4: Tooling Layer
 
