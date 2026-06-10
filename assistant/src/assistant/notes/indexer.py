@@ -37,12 +37,26 @@ def index_notes(conn: sqlite3.Connection, notes_dir: Path) -> IndexStats:
             continue
         current_paths.add(str(path))
         stats = _add(stats, scanned=1)
+        file_size = path.stat().st_size
         file_hash = content_hash(path)
         existing = conn.execute(
-            "SELECT id, content_hash FROM documents WHERE path = ?",
+            """
+            SELECT
+                documents.id,
+                documents.content_hash,
+                documents.title,
+                documents.file_size,
+                documents.tags_json,
+                COUNT(chunks.id) AS chunk_count,
+                COALESCE(MIN(chunks.token_count), 0) AS min_token_count
+            FROM documents
+            LEFT JOIN chunks ON chunks.document_id = documents.id
+            WHERE documents.path = ?
+            GROUP BY documents.id
+            """,
             (str(path),),
         ).fetchone()
-        if existing and existing["content_hash"] == file_hash:
+        if existing and existing["content_hash"] == file_hash and not _needs_metadata_backfill(existing, file_size):
             stats = _add(stats, skipped=1)
             continue
         try:
@@ -55,6 +69,15 @@ def index_notes(conn: sqlite3.Connection, notes_dir: Path) -> IndexStats:
     stats = _add(stats, removed=removed)
     conn.commit()
     return stats
+
+
+def _needs_metadata_backfill(row: sqlite3.Row, file_size: int) -> bool:
+    return (
+        row["title"] is None
+        or row["tags_json"] is None
+        or int(row["file_size"] or 0) != file_size
+        or (int(row["chunk_count"] or 0) > 0 and int(row["min_token_count"] or 0) == 0)
+    )
 
 
 def index_file(conn: sqlite3.Connection, path: Path, file_hash: str | None = None) -> int:

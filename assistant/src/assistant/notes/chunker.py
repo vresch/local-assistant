@@ -67,14 +67,18 @@ def _split_text(text: str, max_chars: int, start_line: int) -> list[tuple[str, i
     parts: list[tuple[str, int, int]] = []
     current: list[tuple[str, int, int]] = []
     current_len = 0
-    block_start = start_line
+    cursor_line = start_line
     blocks = re.split(r"(\n\s*\n)", text)
 
     for raw_block in blocks:
         if re.fullmatch(r"\n\s*\n", raw_block):
-            block_start += raw_block.count("\n")
+            cursor_line += raw_block.count("\n")
             continue
+        raw_start = cursor_line
+        leading_newlines = len(raw_block) - len(raw_block.lstrip("\n"))
+        block_start = raw_start + leading_newlines
         block = raw_block.strip()
+        cursor_line = raw_start + raw_block.count("\n")
         if not block:
             continue
         block_end = _end_line(block_start, block)
@@ -84,7 +88,6 @@ def _split_text(text: str, max_chars: int, start_line: int) -> list[tuple[str, i
                 current = []
                 current_len = 0
             parts.extend(_split_long_block(block, max_chars, block_start, block_end))
-            block_start = block_end + 1
             continue
         next_len = current_len + len(block) + (2 if current else 0)
         if current and next_len > max_chars:
@@ -94,7 +97,6 @@ def _split_text(text: str, max_chars: int, start_line: int) -> list[tuple[str, i
         else:
             current.append((block, block_start, block_end))
             current_len = next_len
-        block_start = block_end + 1
 
     if current:
         parts.append(_join_current(current))

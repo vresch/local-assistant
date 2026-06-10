@@ -49,6 +49,28 @@ def test_index_skips_unchanged_files(tmp_path: Path) -> None:
     assert second.skipped == 1
 
 
+def test_index_backfills_metadata_for_migrated_unchanged_files(tmp_path: Path) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    note = notes_dir / "alpha.md"
+    note.write_text("# Alpha\nOne note #business.", encoding="utf-8")
+
+    with connect(tmp_path / "assistant.db") as conn:
+        index_notes(conn, notes_dir)
+        conn.execute("UPDATE documents SET title = NULL, file_size = 0, tags_json = '[]'")
+        conn.execute("UPDATE chunks SET heading_path = NULL, token_count = 0, start_line = 1, end_line = 1")
+        stats = index_notes(conn, notes_dir)
+        results = search_notes(conn, "one")
+
+    assert stats.updated == 1
+    assert stats.skipped == 0
+    assert results[0].title == "Alpha"
+    assert results[0].tags == ("business",)
+    assert results[0].heading_path == "Alpha"
+    assert results[0].token_count > 0
+    assert results[0].end_line == 2
+
+
 def test_index_removes_deleted_markdown_files_from_search(tmp_path: Path) -> None:
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()

@@ -40,3 +40,13 @@ def test_chunk_markdown_splits_large_sections() -> None:
     assert all(chunk.heading_path == "Long" for chunk in chunks)
     assert all(chunk.start_line == 1 for chunk in chunks)
     assert all(len(chunk.content) <= 120 for chunk in chunks)
+
+
+def test_chunk_markdown_split_line_ranges_account_for_blank_lines() -> None:
+    chunks = chunk_markdown("# Alpha\nLine one.\n\nLine two.\n\nLine three.", max_chars=18)
+
+    assert [(chunk.content, chunk.start_line, chunk.end_line) for chunk in chunks] == [
+        ("# Alpha\nLine one.", 1, 2),
+        ("Line two.", 4, 4),
+        ("Line three.", 6, 6),
+    ]
