@@ -9,7 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from assistant.config import get_settings
+from assistant.config import get_settings, validate_llama_settings
 from assistant.db import cleanup_database, connect
 from assistant.logs.debug import get_debug_logger
 from assistant.logs.logger import finish_run, log_event, start_run, update_run_route
@@ -129,6 +129,16 @@ def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
     with connect(settings.db_path) as conn:
         run_id = start_run(conn, "ask", question, "local_answer")
         try:
+            llm_config_issues = [] if no_model else validate_llama_settings(settings)
+            if llm_config_issues:
+                summary = "invalid_llm_config " + "; ".join(llm_config_issues)
+                log_event(conn, run_id, "llm_config", summary)
+                finish_run(conn, run_id, "failed", summary)
+                debug.error("command=ask status=failed run_id=%s %s", run_id, summary)
+                for issue in llm_config_issues:
+                    err_console.print(f"Invalid LLM configuration: {issue}", soft_wrap=True)
+                raise typer.Exit(1)
+
             with _status("Thinking with local notes..."):
                 answer = answer_question(
                     conn,
@@ -169,6 +179,8 @@ def ask(question: str, limit: int = 5, no_model: bool = False) -> None:
             )
             finish_run(conn, run_id, "succeeded", summary)
             debug.info("command=ask status=succeeded run_id=%s %s", run_id, summary)
+        except typer.Exit:
+            raise
         except Exception as exc:
             finish_run(conn, run_id, "failed", str(exc))
             debug.exception("command=ask status=failed run_id=%s", run_id)
@@ -436,7 +448,8 @@ def _dashboard_overview(settings, counts: dict[str, int]) -> Text:
     _append_dashboard_kv(overview, "db_path", settings.db_path, value_style=DASHBOARD_MUTED)
     _append_dashboard_kv(overview, "notes_dir", settings.notes_dir, value_style=DASHBOARD_MUTED)
     _append_dashboard_kv(overview, "debug_log_path", settings.debug_log_path, value_style=DASHBOARD_MUTED)
-    _append_dashboard_kv(overview, "configured_llm", "llama-cpp-python", value_style=DASHBOARD_LLM)
+    configured_llm = "llama-cpp-python" if settings.llama_model_path else "none"
+    _append_dashboard_kv(overview, "configured_llm", configured_llm, value_style=DASHBOARD_LLM)
     _append_dashboard_kv(overview, "configured_model", settings.llama_model_path or "none", value_style=DASHBOARD_LLM)
     overview.append("\n")
     _append_dashboard_kv(overview, "documents", counts["documents"], value_style=DASHBOARD_GOOD)

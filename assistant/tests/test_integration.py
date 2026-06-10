@@ -145,6 +145,62 @@ def test_cli_ask_handles_empty_results_and_no_model_flag(tmp_path: Path) -> None
     ]
 
 
+def test_cli_ask_alerts_when_configured_llm_model_path_is_invalid(tmp_path: Path) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "project.md").write_text("# Project\nSQLite FTS5 powers local search.", encoding="utf-8")
+    db_path = tmp_path / "assistant.db"
+    missing_model = tmp_path / "missing.gguf"
+    env = {
+        "ASSISTANT_NOTES_DIR": str(notes_dir),
+        "ASSISTANT_DB_PATH": str(db_path),
+        "ASSISTANT_DEBUG_LOG_PATH": str(tmp_path / "debug.log"),
+        "ASSISTANT_LLAMA_MODEL_PATH": str(missing_model),
+    }
+
+    assert runner.invoke(cli.app, ["index"], env=env).exit_code == 0
+    result = runner.invoke(cli.app, ["ask", "What powers local search?"], env=env)
+
+    assert result.exit_code == 1
+    assert f"Invalid LLM configuration: ASSISTANT_LLAMA_MODEL_PATH does not exist: {missing_model}" in result.output
+
+    with sqlite3.connect(db_path) as conn:
+        run = conn.execute("SELECT command, route, status, summary FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+        events = conn.execute(
+            """
+            SELECT event_type, message
+            FROM run_events
+            WHERE run_id = ?
+            ORDER BY id
+            """,
+            (2,),
+        ).fetchall()
+
+    expected_summary = f"invalid_llm_config ASSISTANT_LLAMA_MODEL_PATH does not exist: {missing_model}"
+    assert run == ("ask", "local_answer", "failed", expected_summary)
+    assert events == [("llm_config", expected_summary)]
+
+
+def test_cli_ask_no_model_ignores_invalid_llm_model_path(tmp_path: Path) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "project.md").write_text("# Project\nSQLite FTS5 powers local search.", encoding="utf-8")
+    db_path = tmp_path / "assistant.db"
+    env = {
+        "ASSISTANT_NOTES_DIR": str(notes_dir),
+        "ASSISTANT_DB_PATH": str(db_path),
+        "ASSISTANT_DEBUG_LOG_PATH": str(tmp_path / "debug.log"),
+        "ASSISTANT_LLAMA_MODEL_PATH": str(tmp_path / "missing.gguf"),
+    }
+
+    assert runner.invoke(cli.app, ["index"], env=env).exit_code == 0
+    result = runner.invoke(cli.app, ["ask", "What powers local search?", "--no-model"], env=env)
+
+    assert result.exit_code == 0
+    assert "Invalid LLM configuration" not in result.output
+    assert "The strongest matching note says" in result.output
+
+
 def test_cli_categorise_notes_prints_and_logs_categories(tmp_path: Path) -> None:
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
@@ -245,6 +301,8 @@ def test_cli_dashboard_shows_storage_runs_and_llm_events(tmp_path: Path) -> None
     assert "Assistant Dashboard" in result.output
     assert "documents=1" in result.output
     assert "chunks=1" in result.output
+    assert "configured_llm=none" in result.output
+    assert "configured_model=none" in result.output
     assert "Recent Documents" in result.output
     assert "Recent Runs" in result.output
     assert "Last LLM Request Summary" in result.output

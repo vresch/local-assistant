@@ -63,6 +63,26 @@ def get_settings() -> Settings:
     )
 
 
+def validate_llama_settings(settings: Settings) -> list[str]:
+    """Return local LLM configuration problems that should block model use."""
+    issues: list[str] = []
+    if settings.llama_model_path is None:
+        return issues
+
+    if not settings.llama_model_path.exists():
+        issues.append(f"ASSISTANT_LLAMA_MODEL_PATH does not exist: {settings.llama_model_path}")
+    elif not settings.llama_model_path.is_file():
+        issues.append(f"ASSISTANT_LLAMA_MODEL_PATH is not a file: {settings.llama_model_path}")
+
+    if settings.llama_context_size <= 0:
+        issues.append("ASSISTANT_LLAMA_CONTEXT_SIZE must be greater than zero")
+    if settings.llama_max_tokens <= 0:
+        issues.append("ASSISTANT_LLAMA_MAX_TOKENS must be greater than zero")
+    if settings.llama_temperature < 0:
+        issues.append("ASSISTANT_LLAMA_TEMPERATURE must be zero or greater")
+    return issues
+
+
 def find_env_file(start: Path) -> Path | None:
     for directory in (start, *start.parents):
         candidate = directory / ".env"

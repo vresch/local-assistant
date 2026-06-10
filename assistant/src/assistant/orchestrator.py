@@ -63,11 +63,9 @@ def answer_question(
 
     sources = [_source_reference(result) for result in results]
     supporting_notes = [_plain_excerpt(result.content) for result in results]
-    used_local_model = use_model and model_path is not None
-    llm = "llama-cpp-python" if used_local_model else "none"
-    local_model = str(model_path) if used_local_model else None
-    direct_answer = (
-        _llama_answer(
+    model_requested = use_model and model_path is not None
+    if model_requested:
+        direct_answer = _llama_answer(
             question,
             results,
             model_path,
@@ -75,9 +73,14 @@ def answer_question(
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        if used_local_model
-        else _extractive_answer(results)
-    )
+        used_local_model = True
+        llm = "llama-cpp-python"
+        local_model = str(model_path)
+    else:
+        direct_answer = _extractive_answer(results)
+        used_local_model = False
+        llm = "none"
+        local_model = None
 
     lines = [
         "Answer:",

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from assistant.config import get_settings
+from assistant.config import Settings, get_settings, validate_llama_settings
 from assistant.db import connect
 from assistant.notes.indexer import index_notes
 
@@ -77,6 +77,30 @@ def test_environment_variables_override_env_file(tmp_path: Path, monkeypatch: py
     settings = get_settings()
 
     assert settings.notes_dir == tmp_path / "explicit-notes"
+
+
+def test_validate_llama_settings_reports_invalid_model_path(tmp_path: Path) -> None:
+    settings = Settings(
+        notes_dir=tmp_path / "notes",
+        db_path=tmp_path / "assistant.db",
+        registry_path=tmp_path / "registry.yaml",
+        debug_log_path=tmp_path / "debug.log",
+        llm_summary_path=tmp_path / "last-llm-request.md",
+        research_dir=tmp_path / "research",
+        llama_model_path=tmp_path / "missing.gguf",
+        llama_context_size=4096,
+        llama_max_tokens=256,
+        llama_temperature=0.2,
+        remote_provider=None,
+        remote_model=None,
+        remote_api_key=None,
+        remote_base_url="https://api.openai.com/v1",
+        remote_timeout=30.0,
+    )
+
+    assert validate_llama_settings(settings) == [
+        f"ASSISTANT_LLAMA_MODEL_PATH does not exist: {tmp_path / 'missing.gguf'}"
+    ]
 
 
 def test_index_refuses_home_directory(tmp_path: Path) -> None:

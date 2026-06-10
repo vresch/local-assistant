@@ -86,6 +86,31 @@ def test_answer_question_skips_llama_without_model_path(tmp_path: Path) -> None:
     assert "The strongest matching note says" in answer.text
 
 
+def test_answer_question_does_not_use_llama_without_matching_local_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "project.md").write_text("# Project Alpha\nSQLite FTS5 powers local note search.", encoding="utf-8")
+    model_path = tmp_path / "model.gguf"
+    model_path.write_text("fake model", encoding="utf-8")
+
+    def fail_if_loaded() -> Any:
+        raise AssertionError("llama should not load without retrieved local context")
+
+    monkeypatch.setattr("assistant.orchestrator._load_llama_class", fail_if_loaded)
+
+    with connect(tmp_path / "assistant.db") as conn:
+        index_notes(conn, notes_dir)
+        answer = answer_question(conn, "banana telescope", model_path=model_path)
+
+    assert answer.used_local_model is False
+    assert answer.llm == "none"
+    assert answer.local_model is None
+    assert answer.sources == []
+    assert answer.summary == "no relevant chunks found; local_model_requested=True"
+
+
 def test_answer_question_synthesizes_multiple_business_ideas_without_model(tmp_path: Path) -> None:
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
