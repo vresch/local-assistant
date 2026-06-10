@@ -26,6 +26,7 @@ from assistant.ui import run_ui
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
+err_console = Console(stderr=True)
 
 DASHBOARD_BORDER = "cyan"
 DASHBOARD_HEADER = "bold cyan"
@@ -355,17 +356,24 @@ def run(tool_name: str) -> None:
                 known = ", ".join(sorted(registry)) or "none"
                 raise typer.BadParameter(f"unknown tool {tool_name!r}; known tools: {known}")
             if tool.requires_approval:
-                log_event(conn, run_id, "approval_required", "approval flag present; interactive approval not implemented")
+                summary = f"tool={tool.name} blocked approval_required=true"
+                log_event(conn, run_id, "approval_required", "execution blocked; interactive approval not implemented")
+                finish_run(conn, run_id, "failed", summary)
+                debug.info("command=run run_id=%s %s", run_id, summary)
+                err_console.print(summary)
+                raise typer.Exit(1)
             result = run_tool(tool)
             if result.stdout:
                 console.print(result.stdout, end="")
             if result.stderr:
-                console.err.print(result.stderr, end="")
+                err_console.print(result.stderr, end="")
             summary = f"tool={tool.name} status={result.status} returncode={result.returncode}"
             log_event(conn, run_id, "tool", summary)
             finish_run(conn, run_id, result.status, summary)
             debug.info("command=run run_id=%s %s", run_id, summary)
             exit_code = result.returncode
+        except typer.Exit:
+            raise
         except Exception as exc:
             finish_run(conn, run_id, "failed", str(exc))
             debug.exception("command=run status=failed run_id=%s tool_name=%r", run_id, tool_name)

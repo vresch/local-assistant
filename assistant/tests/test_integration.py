@@ -256,7 +256,7 @@ def test_cli_dashboard_shows_storage_runs_and_llm_events(tmp_path: Path) -> None
     assert "answered from 1 local chunks" in result.output
 
 
-def test_cli_run_loads_registry_runs_tool_and_logs_approval(tmp_path: Path, monkeypatch) -> None:
+def test_cli_run_loads_registry_and_runs_tool(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "assistant.db"
     registry_path = tmp_path / "registry.yaml"
     registry_path.write_text(
@@ -264,8 +264,8 @@ def test_cli_run_loads_registry_runs_tool_and_logs_approval(tmp_path: Path, monk
 tools:
   sample:
     description: Sample integration tool.
-    command: ["python", "-c", "print('sample output')"]
-    requires_approval: true
+    command: python -c "print('sample output')"
+    requires_approval: false
 """.strip(),
         encoding="utf-8",
     )
@@ -275,6 +275,7 @@ tools:
     }
 
     def fake_run_tool(tool):
+        assert tool.command == ["python", "-c", "print('sample output')"]
         return ToolResult(
             tool_name=tool.name,
             command=["uv", "run", *tool.command],
@@ -301,10 +302,48 @@ tools:
         "succeeded",
         "tool=sample status=succeeded returncode=0",
     )
-    assert events == [
-        ("approval_required", "approval flag present; interactive approval not implemented"),
-        ("tool", "tool=sample status=succeeded returncode=0"),
-    ]
+    assert events == [("tool", "tool=sample status=succeeded returncode=0")]
+
+
+def test_cli_run_blocks_tools_that_require_approval(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "assistant.db"
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(
+        """
+tools:
+  sample:
+    description: Sample integration tool.
+    command: ["python", "-c", "print('sample output')"]
+    requires_approval: true
+""".strip(),
+        encoding="utf-8",
+    )
+    env = {
+        "ASSISTANT_DB_PATH": str(db_path),
+        "ASSISTANT_REGISTRY_PATH": str(registry_path),
+    }
+
+    def fail_run_tool(tool):
+        raise AssertionError("approval-required tools must not execute")
+
+    monkeypatch.setattr(cli, "run_tool", fail_run_tool)
+
+    result = runner.invoke(cli.app, ["run", "sample"], env=env)
+    assert result.exit_code == 1
+    assert "tool=sample blocked approval_required=true" in result.output
+
+    with sqlite3.connect(db_path) as conn:
+        run = conn.execute("SELECT command, input, route, status, summary FROM runs").fetchone()
+        events = conn.execute("SELECT event_type, message FROM run_events ORDER BY id").fetchall()
+
+    assert run == (
+        "run",
+        "sample",
+        "tools.run",
+        "failed",
+        "tool=sample blocked approval_required=true",
+    )
+    assert events == [("approval_required", "execution blocked; interactive approval not implemented")]
 
 
 def test_cli_clean_db_removes_indexed_data_but_keeps_logs(tmp_path: Path) -> None:

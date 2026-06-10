@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,7 @@ def load_registry(path: Path) -> dict[str, ToolSpec]:
 def _parse_tool(name: str, value: dict[str, Any]) -> ToolSpec:
     command = value.get("command")
     if isinstance(command, str):
-        command = command.split()
+        command = shlex.split(command)
     if not isinstance(command, list) or not all(isinstance(part, str) for part in command):
         raise ValueError(f"Tool {name!r} must define command as a string or list of strings")
     return ToolSpec(

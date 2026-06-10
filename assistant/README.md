@@ -105,7 +105,7 @@ tools:
     requires_approval: false
 ```
 
-The `requires_approval` flag is recorded in logs, but interactive approval is not implemented in Phase 1.
+Tools with `requires_approval: true` are blocked because interactive approval is not implemented in Phase 1.
 
 ## Configuration
 
