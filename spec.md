@@ -960,15 +960,64 @@ Safety constraints:
 
 #### Phase 3: Assistant Memory And Task State
 
-Possible work:
+Outcome: Add lightweight local task state across sessions.
 
-* Add local task/session history.
-* Add `assistant history`.
-* Add `assistant remember "fact"`.
-* Add `assistant forget <id>`.
-* Store local user preferences.
-* Add saved searches or pinned notes.
-* Keep assistant-generated memory separate from indexed user notes.
+Scope:
+
+* Track tasks, status, priority, timestamps, and optional context.
+* Store task state locally in SQLite.
+* Keep task state separate from indexed user notes, logs, roadmap status, and assistant memory facts.
+* Do not add planning agents, background workers, reminders, or remote model behavior.
+
+Proposed task table:
+
+```sql
+CREATE TABLE tasks (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 3,
+  source TEXT,
+  related_path TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT
+);
+```
+
+Allowed task statuses:
+
+```text
+open
+active
+blocked
+done
+cancelled
+```
+
+MVP command path:
+
+```bash
+assistant task add "Review local provider tests"
+assistant task list
+assistant task list --status open
+assistant task show 12
+assistant task set 12 --status active
+assistant task set 12 --priority 1
+assistant task note 12 "Blocked on config decision"
+assistant task done 12
+assistant task cancel 12
+```
+
+Acceptance criteria:
+
+* Tasks persist across CLI sessions.
+* Tasks are stored separately from indexed notes.
+* `assistant task add/list/show/set/done/cancel` works.
+* Invalid statuses and priorities are rejected.
+* Task commands write local log entries.
+* No remote model, tool execution, or background process is required.
 
 #### Phase 6: Note Workflows
 
