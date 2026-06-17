@@ -1,6 +1,23 @@
 # Roadmap
 
-Source: `spec.md`
+This file owns delivery status and future work. Product behavior and architecture live in
+[spec.md](spec.md); user-facing setup and command examples live in
+[assistant/README.md](assistant/README.md).
+
+## Contents
+
+- [Status Values](#status-values)
+- [Recommended Order](#recommended-order)
+- [Ordering Rationale](#ordering-rationale)
+- [Phase 1: Local Retrieval CLI](#phase-1-local-retrieval-cli)
+- [Phase 2: Better Local Knowledge Quality](#phase-2-better-local-knowledge-quality)
+- [Phase 3: Tooling Layer](#phase-3-tooling-layer)
+- [Phase 4: Local LLM Support](#phase-4-local-llm-support)
+- [Phase 5: Assistant Memory And Task State](#phase-5-assistant-memory-and-task-state)
+- [Phase 6: Note Workflows](#phase-6-note-workflows)
+- [Phase 7: Project-Aware Mode](#phase-7-project-aware-mode)
+- [Phase 8: TUI Or Minimal UI](#phase-8-tui-or-minimal-ui)
+- [Phase 9: Reliability And Packaging](#phase-9-reliability-and-packaging)
 
 ## Status Values
 
@@ -14,17 +31,20 @@ Source: `spec.md`
 
 ## Recommended Order
 
+Phase numbers match delivery order. If phases are reordered, update the phase labels,
+anchors, and section headings together.
+
 | Order | Phase | Status | Outcome |
 | --- | --- | --- | --- |
-| 1 | Phase 1: Local Retrieval CLI | `done` | Build the local index/search/ask/run/log core. |
-| 2 | Phase 2: Better Local Knowledge Quality | `done` | Improve retrieval quality and source usefulness. |
-| 3 | Phase 4: Tooling Layer | `done` | Make local tool execution controlled and practical. |
-| 4 | Phase 5: Local LLM Support | `done` | Add optional local generation after deterministic behavior works. |
-| 5 | Phase 3: Assistant Memory And Task State | `done` | Add lightweight local task state across sessions. |
-| 6 | Phase 6: Note Workflows | `proposed` | Add practical note operations. |
-| 7 | Phase 7: Project-Aware Mode | `proposed` | Extend indexing/search to local project folders. |
-| 8 | Phase 8: TUI Or Minimal UI | `proposed` | Improve ergonomics after commands stabilize. |
-| 9 | Phase 9: Reliability And Packaging | `proposed` | Harden the assistant for regular local use. |
+| 1 | [Phase 1: Local Retrieval CLI](#phase-1-local-retrieval-cli) | `done` | Build the local index/search/ask/run/log core. |
+| 2 | [Phase 2: Better Local Knowledge Quality](#phase-2-better-local-knowledge-quality) | `done` | Improve retrieval quality and source usefulness. |
+| 3 | [Phase 3: Tooling Layer](#phase-3-tooling-layer) | `done` | Make local tool execution controlled and practical. |
+| 4 | [Phase 4: Local LLM Support](#phase-4-local-llm-support) | `done` | Add optional local generation after deterministic behavior works. |
+| 5 | [Phase 5: Assistant Memory And Task State](#phase-5-assistant-memory-and-task-state) | `done` | Add lightweight local task state across sessions. |
+| 6 | [Phase 6: Note Workflows](#phase-6-note-workflows) | `proposed` | Add practical note operations. |
+| 7 | [Phase 7: Project-Aware Mode](#phase-7-project-aware-mode) | `proposed` | Extend indexing/search to local project folders. |
+| 8 | [Phase 8: TUI Or Minimal UI](#phase-8-tui-or-minimal-ui) | `done` | Improve ergonomics after commands stabilize. |
+| 9 | [Phase 9: Reliability And Packaging](#phase-9-reliability-and-packaging) | `proposed` | Harden the assistant for regular local use. |
 
 ## Ordering Rationale
 
@@ -86,7 +106,7 @@ Acceptance criteria:
 - Tests cover metadata extraction, incremental indexing, filtering, ranking behavior, and citation formatting.
 - No remote service is required.
 
-## Phase 4: Tooling Layer
+## Phase 3: Tooling Layer
 
 Status: `done`
 
@@ -111,7 +131,7 @@ Default built-in tools:
 - `file-search`
 - `project-inspect`
 
-## Phase 5: Local LLM Support
+## Phase 4: Local LLM Support
 
 Status: `done`
 
@@ -137,7 +157,7 @@ Safety constraints:
 - If retrieved notes are insufficient, the assistant says so directly instead of inventing details.
 - Local model prompts are grounded in retrieved note chunks and include source-aware context.
 
-## Phase 3: Assistant Memory And Task State
+## Phase 5: Assistant Memory And Task State
 
 Status: `done`
 
@@ -244,17 +264,17 @@ Possible work:
 
 ## Phase 8: TUI Or Minimal UI
 
-Status: `proposed`
+Status: `done`
 
 Outcome: Improve ergonomics after commands stabilize.
 
-Possible work:
+Implemented behavior:
 
-- Add interactive search results.
-- Add source previews.
-- Browse recent runs and logs.
-- Run approved tools from the UI.
-- Select retrieved sources for `assistant ask`.
+- `assistant ui` opens a Textual workflow TUI.
+- Search results can be filtered, previewed, opened, and added to an in-memory source basket.
+- Ask, Sources, Tools, Runs, Logs, and Storage workflows are available from the TUI.
+- Tool dry-runs and approved tool execution use the same registry, validation, and logging path as the CLI.
+- Runs and logs can be inspected without treating raw storage tables as the main workflow.
 
 ## Phase 9: Reliability And Packaging
 

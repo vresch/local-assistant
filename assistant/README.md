@@ -2,23 +2,30 @@
 
 CLI-first, local-first personal AI assistant for Markdown notes and local Python tools.
 
-Phase 1 is intentionally boring: Markdown files are chunked, indexed into SQLite FTS5,
-searched from the CLI, answered from retrieved notes, and every action is logged locally.
-Optional model-backed commands exist, but the core workflow works without a configured
-LLM or remote provider.
+The assistant indexes Markdown notes into SQLite FTS5, answers from retrieved notes,
+runs registered Python tools through `uv`, and logs actions locally. Optional local
+model synthesis and remote research support stay disabled unless configured.
 
-Current implementation status: Phases 1, 2, 3, 4, 5, and 8 are complete. The assistant now
-has the local retrieval core, richer note metadata/search, controlled local tool
-execution, built-in workflow tools, local task state, optional local LLM synthesis
-through configured local providers, and a Textual workflow TUI. Remote behavior remains
-disabled unless explicitly configured.
+## Documentation Map
+
+- [README](#local-assistant): install, configure, and use the CLI.
+- [Specification](../spec.md): product contract, architecture, data model, and command behavior.
+- [Roadmap](../ROADMAP.md): phase status, accepted work, and proposed next work.
+- [Agent instructions](../AGENTS.md): implementation constraints for coding agents.
 
 ## Contents
 
+- [Documentation Map](#documentation-map)
 - [Quick Start](#quick-start)
-- [Core Workflow](#core-workflow)
-- [Commands](#commands)
-- [Tools](#tools)
+- [Daily Workflow](#daily-workflow)
+- [Command Reference](#command-reference)
+  - [Index](#index)
+  - [Search](#search)
+  - [Ask](#ask)
+  - [Research](#research)
+  - [Tasks](#tasks)
+  - [Inspect](#inspect)
+- [Tool Usage](#tool-usage)
 - [Configuration](#configuration)
 - [Storage](#storage)
 - [Development](#development)
@@ -55,7 +62,7 @@ uv run assistant search "project alpha"
 uv run assistant ask "What did I decide about search?"
 ```
 
-## Core Workflow
+## Daily Workflow
 
 1. Put Markdown notes in `ASSISTANT_NOTES_DIR`, which defaults to `~/notes`.
 2. Run `uv run assistant index`.
@@ -72,7 +79,21 @@ uv run assistant ask "What do my notes say about sound healing?" --no-model
 uv run assistant run hello
 ```
 
-## Commands
+## Command Reference
+
+All commands write local run logs.
+
+| Command | Purpose | Remote behavior |
+| --- | --- | --- |
+| `assistant index` | Index Markdown notes into SQLite FTS5. | None |
+| `assistant search` | Search indexed note chunks. | None |
+| `assistant show` | Inspect one indexed chunk. | None |
+| `assistant ask` | Answer from retrieved local notes. | Never remote |
+| `assistant research` | Research with local notes first. | Optional, only when configured |
+| `assistant task ...` | Track local task state. | None |
+| `assistant dashboard` | Show read-only terminal status. | None |
+| `assistant ui` | Open the Textual workflow TUI. | Same as selected workflow |
+| `assistant run` | Execute registered local tools. | None unless the tool itself does it |
 
 ### Index
 
@@ -132,10 +153,7 @@ uv run assistant ask "What did I decide about search?" --model-required
 ```
 
 Supported local providers are `llama-cpp-python` and `llama.cpp-server`.
-
-Local model support is optional. `assistant ask` never calls a remote provider, and
-falls back to extractive answers from retrieved notes when no local provider is
-configured.
+`assistant ask` never calls a remote provider.
 
 ### Research
 
@@ -195,9 +213,6 @@ uv run assistant task done 1
 uv run assistant task cancel 2
 ```
 
-Allowed statuses are `open`, `active`, `blocked`, `done`, and `cancelled`.
-Priorities are `1` through `5`, with `1` treated as highest priority.
-
 Task commands support machine-readable output:
 
 ```bash
@@ -248,31 +263,16 @@ q       quit
 Workflow-specific keys only act in their matching tab; for example, source selection
 keys are scoped to Search and tool dry-runs are scoped to Tools.
 
-Categorise indexed notes with local keyword rules:
+Maintenance commands:
 
 ```bash
 uv run assistant categorise-notes
-```
-
-Save a Markdown summary of the most recent `ask` run:
-
-```bash
 uv run assistant save-llm-summary
-```
-
-Clean indexed note data:
-
-```bash
 uv run assistant clean-db
-```
-
-Clean indexed note data and old run logs:
-
-```bash
 uv run assistant clean-db --include-logs
 ```
 
-## Tools
+## Tool Usage
 
 Tools are registry-driven and local-first.
 
@@ -335,9 +335,6 @@ Built-in tools:
 - `file-search`: find files by pattern from a local root.
 - `project-inspect`: summarize basic project files from the current working directory.
 
-The local workflow layer is complete: these built-in tools are available through the
-same registry, validation, approval, dry-run, and logging path as custom tools.
-
 ## Configuration
 
 Configuration is read from environment variables and from the nearest `.env` file found
@@ -388,7 +385,7 @@ Remote behavior is disabled unless configured and only used by optional research
 
 ## Storage
 
-The SQLite database stores:
+SQLite stores:
 
 - `documents`: title, path, tags, file size, content hash, and modification metadata.
 - `chunks`: searchable note chunks with heading paths, line ranges, and token estimates.

@@ -1,5 +1,9 @@
 # Local-First Personal AI Assistant Specification
 
+This file owns product behavior, architecture boundaries, storage contracts, and command
+semantics. Delivery status belongs in [ROADMAP.md](ROADMAP.md); setup and day-to-day
+usage belong in [assistant/README.md](assistant/README.md).
+
 ## Table Of Contents
 
 - [1. Purpose](#1-purpose)
@@ -19,13 +23,21 @@
   - [Core Tables](#core-tables)
   - [Phase 2 Metadata Extensions](#phase-2-metadata-extensions)
   - [Logging Tables](#logging-tables)
-  - [Optional Roadmap Table](#optional-roadmap-table)
+  - [Task State Tables](#task-state-tables)
 - [6. CLI Commands](#6-cli-commands)
   - [`assistant index`](#assistant-index)
   - [`assistant search`](#assistant-search)
   - [`assistant ask`](#assistant-ask)
   - [`assistant run`](#assistant-run)
   - [`assistant research`](#assistant-research)
+  - [`assistant ui`](#assistant-ui)
+- [7. Routing](#7-routing)
+  - [Route Types](#route-types)
+  - [Default Rules](#default-rules)
+  - [Remote Escalation Rules](#remote-escalation-rules)
+- [8. Providers](#8-providers)
+- [9. Logging And Observability](#9-logging-and-observability)
+- [10. Design Constraints](#10-design-constraints)
 
 ## 1. Purpose
 
@@ -88,14 +100,12 @@ Commands:
 ```bash
 assistant research "query"
 assistant ui
-assistant status
 ```
 
 Optional behavior must remain local-first:
 
 * `assistant research` may use remote LLMs only when explicitly configured.
 * `assistant ui` should be read-only if included.
-* `assistant status` should only inspect or update local roadmap state.
 
 ### Out Of Scope For Phase 1
 
@@ -167,7 +177,7 @@ Internally:
 uv run ...
 ```
 
-Phase 4 extends tools with a v2 manifest while keeping the registry-to-runner shape:
+Phase 3 extends tools with a v2 manifest while keeping the registry-to-runner shape:
 
 ```yaml
 tools:
@@ -302,7 +312,6 @@ Phase 2 extends the core tables instead of replacing them. Migrations must be id
 Implemented additions:
 
 ```sql
-ALTER TABLE documents ADD COLUMN title TEXT;
 ALTER TABLE documents ADD COLUMN file_size INTEGER;
 ALTER TABLE documents ADD COLUMN tags_json TEXT;
 
@@ -370,24 +379,6 @@ CREATE TABLE task_events (
   message TEXT NOT NULL,
   created_at TEXT NOT NULL,
   FOREIGN KEY(task_id) REFERENCES tasks(id)
-);
-```
-
-### Optional Roadmap Table
-
-Use only if roadmap/status tracking is implemented in the app instead of a checked-in file.
-
-```sql
-CREATE TABLE roadmap_items (
-  id INTEGER PRIMARY KEY,
-  phase TEXT NOT NULL,
-  title TEXT NOT NULL,
-  status TEXT NOT NULL,
-  priority INTEGER NOT NULL,
-  summary TEXT,
-  started_at TEXT,
-  completed_at TEXT,
-  updated_at TEXT NOT NULL
 );
 ```
 
@@ -542,7 +533,7 @@ Example registry entry:
 tools:
   revenue-report:
     description: Generate monthly revenue report
-    command: "uv run python tools/revenue_report.py"
+    command: ["python", "tools/revenue_report.py"]
     requires_approval: false
     risk: low
 ```
@@ -583,27 +574,6 @@ Rules:
 * Use `Textual`.
 * Keep it read-only in Phase 1.
 * Do not require network access.
-
-### `assistant status`
-
-Optional local roadmap control command.
-
-Examples:
-
-```bash
-assistant status
-assistant status phase-1
-assistant status set phase-2 active
-assistant status set phase-4 planned
-```
-
-Rules:
-
-* Read roadmap items from local storage or a checked-in roadmap file.
-* Show phases in priority order.
-* Allow explicit status changes.
-* Log status changes as local events.
-* Do not trigger model calls, remote research, tool execution, or automatic planning.
 
 ## 7. Routing
 
@@ -694,414 +664,7 @@ Minimum logged data:
 
 Logs make the assistant debuggable and improvable over time.
 
-## 10. Status Control
-
-Status control tracks roadmap progress. It is optional for Phase 1 unless explicitly prioritized.
-
-Allowed statuses:
-
-```text
-proposed
-planned
-active
-blocked
-done
-deferred
-cancelled
-```
-
-Status meanings:
-
-* `proposed`: Captured as an idea, but not committed.
-* `planned`: Accepted into the roadmap.
-* `active`: Currently being worked on.
-* `blocked`: Cannot move forward without a decision, dependency, or external change.
-* `done`: Completed and accepted.
-* `deferred`: Intentionally postponed.
-* `cancelled`: Removed from the roadmap.
-
-Transition rules:
-
-* `proposed` may become `planned`, `deferred`, or `cancelled`.
-* `planned` may become `active`, `deferred`, or `cancelled`.
-* `active` may become `blocked`, `done`, or `deferred`.
-* `blocked` may become `active`, `deferred`, or `cancelled`.
-* `done` is terminal unless manually reopened.
-* `cancelled` is terminal unless manually restored.
-
-## 11. Roadmap
-
-Recommended order:
-
-| Order | Phase | Initial Status | Outcome |
-| --- | --- | --- | --- |
-| 1 | Phase 1: Local Retrieval CLI | `done` | Build the local index/search/ask/run/log core. |
-| 2 | Phase 2: Better Local Knowledge Quality | `done` | Improve retrieval quality and source usefulness. |
-| 3 | Phase 4: Tooling Layer | `done` | Make local tool execution controlled and practical. |
-| 4 | Phase 5: Local LLM Support | `done` | Add optional local generation after deterministic behavior works. |
-| 5 | Phase 3: Assistant Memory And Task State | `done` | Add lightweight local task state across sessions. |
-| 6 | Phase 6: Note Workflows | `proposed` | Add practical note operations. |
-| 7 | Phase 7: Project-Aware Mode | `proposed` | Extend indexing/search to local project folders. |
-| 8 | Phase 8: TUI Or Minimal UI | `proposed` | Improve ergonomics after commands stabilize. |
-| 9 | Phase 9: Reliability And Packaging | `proposed` | Harden the assistant for regular local use. |
-
-Ordering rationale:
-
-* Finish the local CLI core first.
-* Improve retrieval quality before adding broader behavior.
-* Make tool execution useful before model-dependent workflows.
-* Add local LLM support only after the non-LLM core works.
-* Add UI and packaging after the command model is proven.
-
-### Phase Details
-
-#### Phase 1: Local Retrieval CLI
-
-See the Phase 1 contract above.
-
-#### Phase 2: Better Local Knowledge Quality
-
-Goal:
-
-Make local search and `assistant ask` more trustworthy, explainable, and efficient without introducing vector search, background workers, or remote dependencies.
-
-Phase 2 should improve the existing retrieval system rather than change the assistant's architecture.
-
-##### Scope
-
-Must have:
-
-* Add richer chunk metadata: title, heading path, tags, modified time.
-* Improve ranking with FTS/BM25, exact-title matches, heading matches, and optional recency boost.
-* Add search filters: `--tag`, `--path`, `--since`, and `--limit`.
-* Reindex only changed files.
-* Show source citations consistently in `assistant ask`.
-* Add result inspection commands: `assistant show <result-id>` and/or `assistant open <note>`.
-* Add tests for metadata extraction, filtering, ranking, and incremental indexing.
-
-Should have:
-
-* Extract Markdown title from the first H1, then fall back to filename.
-* Track heading path for chunks, not only the nearest heading.
-* Extract simple tags from Markdown frontmatter and inline `#tag` tokens.
-* Preserve line ranges where practical for source display.
-* Make snippets stable and readable.
-
-Out of scope:
-
-* Vector embeddings.
-* Semantic rerankers.
-* Background indexing.
-* Cross-device sync.
-* Automatic note rewriting.
-* Assistant-generated long-term memory.
-* Remote LLM use for indexing or search.
-
-##### Data Model
-
-Phase 2 should keep the Phase 1 SQLite schema compatible and add metadata incrementally.
-
-Document metadata:
-
-* `title`
-* `path`
-* `modified_at`
-* `indexed_at`
-* `content_hash`
-* `file_size`
-* `tags_json`
-
-Chunk metadata:
-
-* `document_id`
-* `chunk_index`
-* `content`
-* `heading`
-* `heading_path`
-* `token_count`
-* `start_line`
-* `end_line`
-
-Tag storage can start as `tags_json` on `documents`. A normalized tag table is not required until filtering or reporting needs it.
-
-##### Indexing Behavior
-
-`assistant index` should become incremental.
-
-Rules:
-
-1. Discover Markdown files under the configured notes path.
-2. Compute each file's `content_hash`, `modified_at`, and `file_size`.
-3. Skip files whose stored hash and metadata are unchanged.
-4. Reindex files that are new or changed.
-5. Remove database records for deleted files.
-6. Update FTS rows atomically with chunk changes.
-7. Report indexed, skipped, removed, and failed counts.
-
-Expected output shape:
-
-```text
-Indexed notes:
-  New: 3
-  Updated: 12
-  Skipped: 1842
-  Removed: 1
-  Failed: 0
-```
-
-##### Search Behavior
-
-`assistant search` should support:
-
-```bash
-assistant search "query" --limit 10
-assistant search "query" --tag business
-assistant search "query" --path projects/sontera
-assistant search "query" --since 2026-01-01
-```
-
-Ranking inputs:
-
-* FTS5/BM25 score.
-* Exact title match boost.
-* Heading and heading-path match boost.
-* Optional recency boost based on `modified_at`.
-
-Ranking must remain deterministic and explainable. Search results should include enough information to understand why a result matched.
-
-Output shape:
-
-```text
-Found 7 results:
-
-1. ~/notes/business/sontera.md
-   Title: Sontera
-   Heading: Offers > Group Sessions
-   Modified: 2026-05-18
-   Tags: business, sound
-   Score: 12.4
-   Snippet: ...
-```
-
-##### Ask Behavior
-
-`assistant ask` should use the improved metadata in source citations.
-
-Rules:
-
-* Always show source paths when chunks are used.
-* Prefer title + heading path over raw filenames in the answer body.
-* Keep exact paths available in the `Sources` section.
-* If the same document contributes multiple chunks, group citations by document where readable.
-* Do not use metadata as evidence unless the chunk content supports the answer.
-
-##### Result Inspection
-
-Add at least one inspect/open command after search results become identifiable.
-
-Possible commands:
-
-```bash
-assistant show <result-id>
-assistant open <note>
-```
-
-`assistant show` should print the full chunk and metadata from the most recent search result set or a stable stored result reference.
-
-`assistant open` may open a note path using the local environment, but should be optional because opening GUI apps may require platform-specific handling.
-
-##### Acceptance Criteria
-
-Phase 2 is complete when:
-
-* Re-running `assistant index` skips unchanged files.
-* Changed and deleted notes are reflected correctly.
-* Search supports `--limit`, `--tag`, `--path`, and `--since`.
-* Search results include title, heading path, modified date, tags when available, and source path.
-* `assistant ask` citations are consistent and readable.
-* At least one result inspection command exists.
-* Tests cover metadata extraction, incremental indexing, filtering, ranking behavior, and citation formatting.
-* No remote service is required.
-
-#### Phase 4: Tooling Layer
-
-Status: implemented for the local Phase 4 core.
-
-Phase 4 extends the existing registry-to-runner path rather than replacing it:
-
-```text
-YAML registry -> ToolSpec -> validated command list -> run_tool() -> local logs
-```
-
-Implemented behavior:
-
-* Tool manifests support `risk`, `permissions`, typed `args`, `timeout_seconds`, and `working_dir`.
-* Registry loading remains backwards compatible with old command-only tool entries.
-* Registry validation rejects unknown risks, unknown permissions, invalid args, invalid tool names, and duplicate list entries.
-* `assistant run <tool> --arg name=value` parses and validates typed arguments.
-* Args render into the command list in manifest order without shell interpolation.
-* `assistant run <tool> --dry-run` prints the resolved command, risk, permissions, and approval requirement without executing.
-* `assistant run <tool> --approve` explicitly authorizes medium/high risk tools and tools with `requires_approval: true`.
-* The runner captures stdout, stderr, return code, duration, timeout status, structured JSON output, and artifacts.
-* Tool run logs include tool name, resolved command, args, dry-run vs execution, risk, permissions, approval result, return code, duration, structured summary, and artifacts.
-
-Default built-in tools:
-
-* `note-create`: create a Markdown note under `ASSISTANT_NOTES_DIR`; medium risk.
-* `note-append-daily`: append a bullet to a daily note; medium risk.
-* `file-search`: find files by local filename pattern; low risk.
-* `project-inspect`: summarize basic project files from the current working directory; low risk.
-
-Safety constraints:
-
-* Commands and args must stay as `list[str]` through execution.
-* Tool args must never be converted into shell strings.
-* Write tools must confine writes to their configured local scope.
-* Remote behavior remains disabled unless explicitly configured elsewhere.
-
-#### Phase 5: Local LLM Support
-
-Status: implemented for the local Phase 5 core.
-
-Phase 5 adds optional local model synthesis while keeping deterministic local behavior as the default fallback.
-
-Implemented behavior:
-
-* A stable local provider interface exists behind `assistant.providers.local`.
-* `assistant ask` can use a configured local model provider for note-grounded synthesis.
-* Supported local providers are `llama-cpp-python` and `llama.cpp-server`.
-* Local provider settings are configured with `ASSISTANT_LOCAL_PROVIDER`, `ASSISTANT_LOCAL_MODEL`, context size, max tokens, temperature, base URL, and timeout.
-* Older `ASSISTANT_LLAMA_*` settings remain compatibility aliases for the in-process `llama-cpp-python` provider.
-* `assistant ask --no-model` always forces extractive local-note answers.
-* `assistant ask --model-provider <provider>` can select a local provider for one request.
-* `assistant ask --model-required` fails fast when a valid local provider is not configured.
-* `assistant search` remains purely SQLite/FTS and never requires a model.
-* Local model usage, model name, fallback behavior, prompt chunk count, and prompt character count are logged.
-* Tests cover provider request/response handling, missing model files, missing dependencies, and local provider prompt behavior.
-
-Safety constraints:
-
-* Remote models are not used by `assistant ask`.
-* If no local model is configured, `assistant ask` still returns an extractive answer from retrieved notes.
-* If retrieved notes are insufficient, the assistant must say so directly instead of inventing details.
-* Local model prompts must be grounded in retrieved note chunks and include source-aware context.
-
-#### Phase 3: Assistant Memory And Task State
-
-Outcome: Add lightweight local task state across sessions.
-
-Scope:
-
-* Track tasks, status, priority, timestamps, and optional context.
-* Store task state locally in SQLite.
-* Keep task state separate from indexed user notes, logs, roadmap status, and assistant memory facts.
-* Do not add planning agents, background workers, reminders, or remote model behavior.
-
-Proposed task table:
-
-```sql
-CREATE TABLE tasks (
-  id INTEGER PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT,
-  status TEXT NOT NULL,
-  priority INTEGER NOT NULL DEFAULT 3,
-  source TEXT,
-  related_path TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  completed_at TEXT
-);
-```
-
-Allowed task statuses:
-
-```text
-open
-active
-blocked
-done
-cancelled
-```
-
-MVP command path:
-
-```bash
-assistant task add "Review local provider tests"
-assistant task list
-assistant task list --status open
-assistant task show 12
-assistant task set 12 --status active
-assistant task set 12 --priority 1
-assistant task note 12 "Blocked on config decision"
-assistant task done 12
-assistant task cancel 12
-```
-
-Acceptance criteria:
-
-* Tasks persist across CLI sessions.
-* Tasks are stored separately from indexed notes.
-* `assistant task add/list/show/set/done/cancel` works.
-* Invalid statuses and priorities are rejected.
-* Task commands write local log entries.
-* No remote model, tool execution, or background process is required.
-
-Implemented behavior:
-
-* Task state lives in `assistant/state/tasks.py`.
-* Task storage helpers support create, list, get, update, complete, cancel, and task notes.
-* Task notes are stored in `task_events`.
-* `assistant task` supports text output by default and JSON output with `--format json`.
-* Tests cover task creation, status transitions, filtering, persistence, CLI logging, and JSON output.
-
-#### Phase 6: Note Workflows
-
-Possible work:
-
-* Add `assistant daily`.
-* Add `assistant capture "thought"`.
-* Add `assistant summarize path/to/note.md`.
-* Add backlinks and related-note discovery.
-* Detect duplicate or near-duplicate notes.
-* Support Markdown frontmatter.
-
-#### Phase 7: Project-Aware Mode
-
-Possible work:
-
-* Add separate indexes for notes and projects.
-* Add `assistant project index`.
-* Add `assistant project search`.
-* Add configurable include/exclude globs.
-* Add code-aware chunking.
-* Extract README, spec, package, and dependency metadata.
-* Add `assistant ask --project "question"`.
-
-#### Phase 8: TUI Or Minimal UI
-
-Possible work:
-
-* Add interactive search results.
-* Add source previews.
-* Browse recent runs and logs.
-* Run approved tools from the UI.
-* Select retrieved sources for `assistant ask`.
-
-#### Phase 9: Reliability And Packaging
-
-Possible work:
-
-* Add installable CLI packaging.
-* Add config discovery and validation.
-* Add database migrations.
-* Add backup/export commands.
-* Handle index corruption and rebuilds.
-* Add logging retention.
-* Expand tests around indexing, search, tools, and logs.
-* Improve documentation.
-
-## 12. Design Constraints
+## 10. Design Constraints
 
 The system should remain:
 
