@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import replace
+import json
 from pathlib import Path
 import shlex
 
@@ -22,12 +24,27 @@ from assistant.orchestrator import answer_question
 from assistant.providers.local import build_local_provider
 from assistant.providers.remote import build_remote_provider
 from assistant.research import research_question
+from assistant.state.tasks import (
+    TASK_STATUSES,
+    Task,
+    TaskEvent,
+    add_task_note,
+    cancel_task,
+    complete_task,
+    create_task,
+    get_task,
+    list_task_events,
+    list_tasks,
+    update_task,
+)
 from assistant.tools.registry import ToolSpec, build_command, load_registry
 from assistant.tools.runner import run_tool
 from assistant.ui import run_ui
 
 
 app = typer.Typer(no_args_is_help=True)
+task_app = typer.Typer(no_args_is_help=True)
+app.add_typer(task_app, name="task", help="Track local task state.")
 console = Console()
 err_console = Console(stderr=True)
 
@@ -46,6 +63,15 @@ STATUS_STYLES = {
     "failed": DASHBOARD_BAD,
     "running": DASHBOARD_WARN,
 }
+
+TASK_STATUS_STYLES = {
+    "open": DASHBOARD_VALUE,
+    "active": DASHBOARD_GOOD,
+    "blocked": DASHBOARD_WARN,
+    "done": DASHBOARD_MUTED,
+    "cancelled": DASHBOARD_BAD,
+}
+OUTPUT_FORMATS = {"text", "json"}
 
 
 @app.command()
@@ -70,6 +96,216 @@ def index() -> None:
             finish_run(conn, run_id, "failed", str(exc))
             debug.exception("command=index status=failed run_id=%s", run_id)
             raise
+
+
+@task_app.command("add")
+def task_add(
+    title: str,
+    description: str | None = typer.Option(None, "--description", "-d"),
+    priority: int = typer.Option(3, "--priority", "-p", min=1, max=5),
+    source: str | None = typer.Option(None, "--source"),
+    related_path: str | None = typer.Option(None, "--related-path"),
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+) -> None:
+    """Add a local task."""
+    _validate_output_format(output_format)
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=task.add title=%r priority=%s db_path=%s", title, priority, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "task add", title, "state.tasks")
+        try:
+            task = create_task(
+                conn,
+                title,
+                description=description,
+                priority=priority,
+                source=source,
+                related_path=related_path,
+            )
+            summary = f"task_id={task.id} status={task.status} priority={task.priority}"
+            log_event(conn, run_id, "task_created", _task_log_summary(task))
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=task.add status=succeeded run_id=%s %s", run_id, summary)
+            _print_task_command_result(task, output_format=output_format)
+        except Exception as exc:
+            if isinstance(exc, (KeyError, ValueError)):
+                message = _task_error_message(exc)
+                finish_run(conn, run_id, "failed", message)
+                err_console.print(message)
+                raise typer.Exit(1) from exc
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=task.add status=failed run_id=%s", run_id)
+            raise
+
+
+@task_app.command("list")
+def task_list(
+    status: str | None = typer.Option(None, "--status", help=f"One of: {', '.join(sorted(TASK_STATUSES))}."),
+    limit: int = typer.Option(20, "--limit", min=1),
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+) -> None:
+    """List local tasks."""
+    _validate_output_format(output_format)
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=task.list status=%r limit=%s db_path=%s", status, limit, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "task list", status or "", "state.tasks")
+        try:
+            tasks = list_tasks(conn, status=status, limit=limit)
+            _print_task_list(tasks, output_format=output_format)
+            summary = f"tasks={len(tasks)} status={status or 'any'}"
+            log_event(conn, run_id, "task_list", summary)
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=task.list status=succeeded run_id=%s %s", run_id, summary)
+        except Exception as exc:
+            if isinstance(exc, (KeyError, ValueError)):
+                message = _task_error_message(exc)
+                finish_run(conn, run_id, "failed", message)
+                err_console.print(message)
+                raise typer.Exit(1) from exc
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=task.list status=failed run_id=%s", run_id)
+            raise
+
+
+@task_app.command("show")
+def task_show(
+    task_id: int,
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+) -> None:
+    """Show a local task and its notes."""
+    _validate_output_format(output_format)
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=task.show task_id=%s db_path=%s", task_id, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "task show", str(task_id), "state.tasks")
+        try:
+            task = get_task(conn, task_id)
+            if task is None:
+                summary = f"task_id={task_id} found=false"
+                finish_run(conn, run_id, "failed", summary)
+                err_console.print(f"Task not found: {task_id}")
+                raise typer.Exit(1)
+            events = list_task_events(conn, task_id)
+            _print_task_detail(task, events, output_format=output_format)
+            summary = f"task_id={task.id} found=true notes={len(events)}"
+            log_event(conn, run_id, "task_show", summary)
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=task.show status=succeeded run_id=%s %s", run_id, summary)
+        except typer.Exit:
+            raise
+        except Exception as exc:
+            if isinstance(exc, (KeyError, ValueError)):
+                message = _task_error_message(exc)
+                finish_run(conn, run_id, "failed", message)
+                err_console.print(message)
+                raise typer.Exit(1) from exc
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=task.show status=failed run_id=%s", run_id)
+            raise
+
+
+@task_app.command("set")
+def task_set(
+    task_id: int,
+    status: str | None = typer.Option(None, "--status", help=f"One of: {', '.join(sorted(TASK_STATUSES))}."),
+    priority: int | None = typer.Option(None, "--priority", min=1, max=5),
+    description: str | None = typer.Option(None, "--description"),
+    related_path: str | None = typer.Option(None, "--related-path"),
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+) -> None:
+    """Update local task fields."""
+    _validate_output_format(output_format)
+    if status is None and priority is None and description is None and related_path is None:
+        raise typer.BadParameter("provide at least one field to update")
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info(
+        "command=task.set task_id=%s status=%r priority=%r db_path=%s",
+        task_id,
+        status,
+        priority,
+        settings.db_path,
+    )
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "task set", str(task_id), "state.tasks")
+        try:
+            task = update_task(
+                conn,
+                task_id,
+                status=status,
+                priority=priority,
+                description=description,
+                related_path=related_path,
+            )
+            summary = f"task_id={task.id} status={task.status} priority={task.priority}"
+            log_event(conn, run_id, "task_updated", _task_log_summary(task))
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=task.set status=succeeded run_id=%s %s", run_id, summary)
+            _print_task_command_result(task, output_format=output_format)
+        except Exception as exc:
+            if isinstance(exc, (KeyError, ValueError)):
+                message = _task_error_message(exc)
+                finish_run(conn, run_id, "failed", message)
+                err_console.print(message)
+                raise typer.Exit(1) from exc
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=task.set status=failed run_id=%s", run_id)
+            raise
+
+
+@task_app.command("note")
+def task_note(
+    task_id: int,
+    note: str,
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+) -> None:
+    """Add a note to a local task."""
+    _validate_output_format(output_format)
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=task.note task_id=%s db_path=%s", task_id, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "task note", str(task_id), "state.tasks")
+        try:
+            event = add_task_note(conn, task_id, note)
+            summary = f"task_id={task_id} note_id={event.id}"
+            log_event(conn, run_id, "task_note", event.message)
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=task.note status=succeeded run_id=%s %s", run_id, summary)
+            _print_task_note_result(event, output_format=output_format)
+        except Exception as exc:
+            if isinstance(exc, (KeyError, ValueError)):
+                message = _task_error_message(exc)
+                finish_run(conn, run_id, "failed", message)
+                err_console.print(message)
+                raise typer.Exit(1) from exc
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=task.note status=failed run_id=%s", run_id)
+            raise
+
+
+@task_app.command("done")
+def task_done(
+    task_id: int,
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+) -> None:
+    """Mark a local task done."""
+    _validate_output_format(output_format)
+    _finish_task_command("done", task_id, complete_task, output_format=output_format)
+
+
+@task_app.command("cancel")
+def task_cancel(
+    task_id: int,
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+) -> None:
+    """Cancel a local task."""
+    _validate_output_format(output_format)
+    _finish_task_command("cancel", task_id, cancel_task, output_format=output_format)
 
 
 @app.command()
@@ -571,6 +807,178 @@ def _tool_run_input(tool_name: str, args: dict[str, str], *, dry_run: bool, appr
     return " ".join(parts)
 
 
+def _finish_task_command(
+    command_name: str,
+    task_id: int,
+    action: Callable[..., Task],
+    *,
+    output_format: str,
+) -> None:
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=task.%s task_id=%s db_path=%s", command_name, task_id, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, f"task {command_name}", str(task_id), "state.tasks")
+        try:
+            task = action(conn, task_id)
+            summary = f"task_id={task.id} status={task.status} priority={task.priority}"
+            log_event(conn, run_id, "task_updated", _task_log_summary(task))
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=task.%s status=succeeded run_id=%s %s", command_name, run_id, summary)
+            _print_task_command_result(task, output_format=output_format)
+        except Exception as exc:
+            if isinstance(exc, (KeyError, ValueError)):
+                message = _task_error_message(exc)
+                finish_run(conn, run_id, "failed", message)
+                err_console.print(message)
+                raise typer.Exit(1) from exc
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=task.%s status=failed run_id=%s", command_name, run_id)
+            raise
+
+
+def _task_summary(task: Task) -> str:
+    parts = [
+        f"task_id={task.id}",
+        f"status={task.status}",
+        f"priority={task.priority}",
+        f"title={task.title}",
+    ]
+    if task.related_path:
+        parts.append(f"related_path={task.related_path}")
+    return " ".join(parts)
+
+
+def _validate_output_format(output_format: str) -> None:
+    if output_format not in OUTPUT_FORMATS:
+        allowed = ", ".join(sorted(OUTPUT_FORMATS))
+        raise typer.BadParameter(f"invalid output format {output_format!r}; allowed: {allowed}")
+
+
+def _task_error_message(exc: Exception) -> str:
+    return str(exc).strip("'")
+
+
+def _task_to_dict(task: Task) -> dict[str, object]:
+    return {
+        "id": task.id,
+        "title": task.title,
+        "description": task.description,
+        "status": task.status,
+        "priority": task.priority,
+        "source": task.source,
+        "related_path": task.related_path,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+        "completed_at": task.completed_at,
+    }
+
+
+def _task_event_to_dict(event: TaskEvent) -> dict[str, object]:
+    return {
+        "id": event.id,
+        "task_id": event.task_id,
+        "event_type": event.event_type,
+        "message": event.message,
+        "created_at": event.created_at,
+    }
+
+
+def _print_json(payload: object) -> None:
+    console.print(json.dumps(payload, indent=2, sort_keys=True), markup=False)
+
+
+def _print_task_command_result(task: Task, *, output_format: str) -> None:
+    if output_format == "json":
+        _print_json({"task": _task_to_dict(task)})
+        return
+    console.print(_task_summary(task))
+
+
+def _print_task_note_result(event: TaskEvent, *, output_format: str) -> None:
+    if output_format == "json":
+        _print_json({"note": _task_event_to_dict(event)})
+        return
+    console.print(f"task_id={event.task_id} note_id={event.id}")
+
+
+def _print_task_list(tasks: list[Task], *, output_format: str) -> None:
+    if output_format == "json":
+        _print_json({"tasks": [_task_to_dict(task) for task in tasks]})
+        return
+    _print_tasks(tasks)
+
+
+def _print_task_detail(task: Task, events: list[TaskEvent], *, output_format: str) -> None:
+    if output_format == "json":
+        _print_json(
+            {
+                "task": _task_to_dict(task),
+                "notes": [_task_event_to_dict(event) for event in events],
+            }
+        )
+        return
+    _print_task(task, events)
+
+
+def _task_log_summary(task: Task) -> str:
+    return (
+        f"task_id={task.id} title={task.title!r} status={task.status} priority={task.priority} "
+        f"source={task.source or 'none'} related_path={task.related_path or 'none'}"
+    )
+
+
+def _print_tasks(tasks: list[Task]) -> None:
+    table = _dashboard_table("Tasks")
+    table.add_column("ID", justify="right", style=DASHBOARD_MUTED)
+    table.add_column("Status")
+    table.add_column("Priority", justify="right", style=DASHBOARD_GOOD)
+    table.add_column("Updated", style=DASHBOARD_MUTED)
+    table.add_column("Title", overflow="fold", style=DASHBOARD_VALUE)
+    table.add_column("Related", overflow="fold", style=DASHBOARD_MUTED)
+    for task in tasks:
+        table.add_row(
+            str(task.id),
+            _styled_task_status(task.status),
+            str(task.priority),
+            task.updated_at,
+            task.title,
+            task.related_path or "",
+        )
+    console.print(table)
+
+
+def _print_task(task: Task, events: list[TaskEvent]) -> None:
+    details = Text()
+    _append_dashboard_kv(details, "task_id", task.id, value_style=DASHBOARD_GOOD)
+    _append_dashboard_kv(details, "title", task.title)
+    _append_dashboard_kv(details, "status", task.status, value_style=TASK_STATUS_STYLES.get(task.status, DASHBOARD_VALUE))
+    _append_dashboard_kv(details, "priority", task.priority, value_style=DASHBOARD_GOOD)
+    _append_dashboard_kv(details, "created", task.created_at, value_style=DASHBOARD_MUTED)
+    _append_dashboard_kv(details, "updated", task.updated_at, value_style=DASHBOARD_MUTED)
+    if task.completed_at:
+        _append_dashboard_kv(details, "completed", task.completed_at, value_style=DASHBOARD_MUTED)
+    if task.source:
+        _append_dashboard_kv(details, "source", task.source)
+    if task.related_path:
+        _append_dashboard_kv(details, "related_path", task.related_path, value_style=DASHBOARD_MUTED)
+    if task.description:
+        _append_dashboard_kv(details, "description", task.description)
+    console.print(Panel(details, title=Text("Task", style="bold white"), border_style=DASHBOARD_BORDER))
+    if events:
+        table = _dashboard_table("Task Notes")
+        table.add_column("ID", justify="right", style=DASHBOARD_MUTED)
+        table.add_column("Created", style=DASHBOARD_MUTED)
+        table.add_column("Message", overflow="fold", style=DASHBOARD_VALUE)
+        for event in events:
+            table.add_row(str(event.id), event.created_at, event.message)
+        console.print(table)
+
+
+def _styled_task_status(status: str) -> Text:
+    return Text(status, style=TASK_STATUS_STYLES.get(status, DASHBOARD_MUTED))
+
+
 def _print_results(results: list[SearchResult]) -> None:
     console.print("Search Results (Chunk IDs shown)")
     if not results:
@@ -638,6 +1046,7 @@ def _dashboard_counts(conn) -> dict[str, int]:
         "chunks": int(conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]),
         "runs": int(conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]),
         "run_events": int(conn.execute("SELECT COUNT(*) FROM run_events").fetchone()[0]),
+        "tasks": int(conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]),
     }
 
 
@@ -652,6 +1061,7 @@ def _dashboard_overview(settings, counts: dict[str, int]) -> Text:
     overview.append("\n")
     _append_dashboard_kv(overview, "documents", counts["documents"], value_style=DASHBOARD_GOOD)
     _append_dashboard_kv(overview, "chunks", counts["chunks"], value_style=DASHBOARD_GOOD)
+    _append_dashboard_kv(overview, "tasks", counts["tasks"], value_style=DASHBOARD_WARN)
     _append_dashboard_kv(overview, "runs", counts["runs"], value_style=DASHBOARD_WARN)
     _append_dashboard_kv(overview, "run_events", counts["run_events"], value_style=DASHBOARD_WARN)
     return overview

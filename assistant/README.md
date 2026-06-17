@@ -7,11 +7,11 @@ searched from the CLI, answered from retrieved notes, and every action is logged
 Optional model-backed commands exist, but the core workflow works without a configured
 LLM or remote provider.
 
-Current implementation status: Phases 1, 2, 4, 5, and 8 are complete. The assistant now
+Current implementation status: Phases 1, 2, 3, 4, 5, and 8 are complete. The assistant now
 has the local retrieval core, richer note metadata/search, controlled local tool
-execution, built-in workflow tools, optional local LLM synthesis through configured
-local providers, and a Textual workflow TUI. Remote behavior remains disabled unless
-explicitly configured.
+execution, built-in workflow tools, local task state, optional local LLM synthesis
+through configured local providers, and a Textual workflow TUI. Remote behavior remains
+disabled unless explicitly configured.
 
 ## Contents
 
@@ -156,6 +156,54 @@ Force the configured remote provider after local retrieval:
 
 ```bash
 uv run assistant research "best architecture for local-first AI assistants" --force-remote --limit 8
+```
+
+### Tasks
+
+Task state is local SQLite state, separate from indexed notes and roadmap status.
+
+Add a task:
+
+```bash
+uv run assistant task add "Review local provider tests"
+```
+
+Add task details:
+
+```bash
+uv run assistant task add "Review local provider tests" \
+  --description "Confirm fallback behavior and missing model handling" \
+  --priority 2 \
+  --related-path assistant/tests/test_local_providers.py
+```
+
+List, filter, and inspect tasks:
+
+```bash
+uv run assistant task list
+uv run assistant task list --status open
+uv run assistant task show 1
+```
+
+Update task state:
+
+```bash
+uv run assistant task set 1 --status active
+uv run assistant task set 1 --priority 1
+uv run assistant task note 1 "Blocked on deciding exact config behavior"
+uv run assistant task done 1
+uv run assistant task cancel 2
+```
+
+Allowed statuses are `open`, `active`, `blocked`, `done`, and `cancelled`.
+Priorities are `1` through `5`, with `1` treated as highest priority.
+
+Task commands support machine-readable output:
+
+```bash
+uv run assistant task add "Review JSON output" --format json
+uv run assistant task list --format json
+uv run assistant task show 1 --format json
 ```
 
 ### Inspect
@@ -345,8 +393,10 @@ The SQLite database stores:
 - `documents`: title, path, tags, file size, content hash, and modification metadata.
 - `chunks`: searchable note chunks with heading paths, line ranges, and token estimates.
 - `chunks_fts`: SQLite FTS5 search index.
+- `tasks`: local task state with status, priority, timestamps, and optional context.
+- `task_events`: task notes and task-local events.
 - `runs`: command-level execution records.
-- `run_events`: detailed events for indexing, search, ask, research, and tool runs.
+- `run_events`: detailed events for indexing, search, ask, research, task, and tool runs.
 
 Generated research summaries are written under `ASSISTANT_RESEARCH_DIR`.
 

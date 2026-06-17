@@ -17,8 +17,13 @@ class RemoteResponse:
 
 
 class RemoteProvider(Protocol):
-    provider_name: str
-    model_name: str
+    @property
+    def provider_name(self) -> str:
+        """Provider identifier."""
+
+    @property
+    def model_name(self) -> str:
+        """Configured model identifier."""
 
     def generate(self, prompt: str) -> RemoteResponse:
         """Return model output for a single research prompt."""

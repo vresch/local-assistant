@@ -62,6 +62,27 @@ def initialize(conn: sqlite3.Connection) -> None:
             message TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 3,
+            source TEXT,
+            related_path TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS task_events (
+            id INTEGER PRIMARY KEY,
+            task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            event_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         """
     )
     _ensure_columns(

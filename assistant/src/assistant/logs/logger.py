@@ -9,6 +9,8 @@ def start_run(conn: sqlite3.Connection, command: str, input_text: str | None, ro
         (command, input_text, route, "running"),
     )
     conn.commit()
+    if cursor.lastrowid is None:
+        raise RuntimeError("run insert did not return an id")
     return int(cursor.lastrowid)
 
 

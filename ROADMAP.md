@@ -20,7 +20,7 @@ Source: `spec.md`
 | 2 | Phase 2: Better Local Knowledge Quality | `done` | Improve retrieval quality and source usefulness. |
 | 3 | Phase 4: Tooling Layer | `done` | Make local tool execution controlled and practical. |
 | 4 | Phase 5: Local LLM Support | `done` | Add optional local generation after deterministic behavior works. |
-| 5 | Phase 3: Assistant Memory And Task State | `proposed` | Add lightweight local state across sessions. |
+| 5 | Phase 3: Assistant Memory And Task State | `done` | Add lightweight local task state across sessions. |
 | 6 | Phase 6: Note Workflows | `proposed` | Add practical note operations. |
 | 7 | Phase 7: Project-Aware Mode | `proposed` | Extend indexing/search to local project folders. |
 | 8 | Phase 8: TUI Or Minimal UI | `proposed` | Improve ergonomics after commands stabilize. |
@@ -139,7 +139,7 @@ Safety constraints:
 
 ## Phase 3: Assistant Memory And Task State
 
-Status: `proposed`
+Status: `done`
 
 Outcome: Add lightweight local task state across sessions.
 
@@ -191,15 +191,16 @@ assistant task done 12
 assistant task cancel 12
 ```
 
-Implementation plan:
+Implemented behavior:
 
-- Add a small task-state module, such as `assistant/state/tasks.py`.
-- Add task storage helpers for create, list, get, update, complete, and cancel.
-- Validate task status and priority.
-- Add a Typer command group: `assistant task`.
-- Log every task command through the existing local logger.
-- Add task event storage only if needed for task notes/comments; otherwise keep the first version to one table.
-- Add tests for task creation, status transitions, filtering, and persistence.
+- Task state lives in `assistant/state/tasks.py`.
+- Task storage helpers support create, list, get, update, complete, cancel, and task notes.
+- Task status and priority are validated.
+- A Typer command group exists as `assistant task`.
+- Task commands write through the existing local logger.
+- Task notes are stored in `task_events`.
+- Task commands support `--format text` and `--format json`.
+- Tests cover task creation, status transitions, filtering, persistence, CLI logging, and JSON output.
 
 Acceptance criteria:
 

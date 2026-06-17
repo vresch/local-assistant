@@ -119,6 +119,8 @@ def index_file(conn: sqlite3.Connection, path: Path, file_hash: str | None = Non
             """,
             (str(path), file_hash, mtime_ns, metadata.title, file_size, tags_json),
         )
+        if cursor.lastrowid is None:
+            raise RuntimeError("document insert did not return an id")
         document_id = int(cursor.lastrowid)
 
     for index, chunk in enumerate(chunks):
@@ -147,6 +149,8 @@ def index_file(conn: sqlite3.Connection, path: Path, file_hash: str | None = Non
                 chunk.end_line,
             ),
         )
+        if cursor.lastrowid is None:
+            raise RuntimeError("chunk insert did not return an id")
         chunk_id = int(cursor.lastrowid)
         conn.execute(
             """

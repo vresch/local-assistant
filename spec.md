@@ -345,6 +345,34 @@ CREATE TABLE run_events (
 );
 ```
 
+### Task State Tables
+
+Task state is local assistant state, not indexed note content.
+
+```sql
+CREATE TABLE tasks (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 3,
+  source TEXT,
+  related_path TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT
+);
+
+CREATE TABLE task_events (
+  id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(task_id) REFERENCES tasks(id)
+);
+```
+
 ### Optional Roadmap Table
 
 Use only if roadmap/status tracking is implemented in the app instead of a checked-in file.
@@ -711,7 +739,7 @@ Recommended order:
 | 2 | Phase 2: Better Local Knowledge Quality | `done` | Improve retrieval quality and source usefulness. |
 | 3 | Phase 4: Tooling Layer | `done` | Make local tool execution controlled and practical. |
 | 4 | Phase 5: Local LLM Support | `done` | Add optional local generation after deterministic behavior works. |
-| 5 | Phase 3: Assistant Memory And Task State | `proposed` | Add lightweight local state across sessions. |
+| 5 | Phase 3: Assistant Memory And Task State | `done` | Add lightweight local task state across sessions. |
 | 6 | Phase 6: Note Workflows | `proposed` | Add practical note operations. |
 | 7 | Phase 7: Project-Aware Mode | `proposed` | Extend indexing/search to local project folders. |
 | 8 | Phase 8: TUI Or Minimal UI | `proposed` | Improve ergonomics after commands stabilize. |
@@ -1018,6 +1046,14 @@ Acceptance criteria:
 * Invalid statuses and priorities are rejected.
 * Task commands write local log entries.
 * No remote model, tool execution, or background process is required.
+
+Implemented behavior:
+
+* Task state lives in `assistant/state/tasks.py`.
+* Task storage helpers support create, list, get, update, complete, cancel, and task notes.
+* Task notes are stored in `task_events`.
+* `assistant task` supports text output by default and JSON output with `--format json`.
+* Tests cover task creation, status transitions, filtering, persistence, CLI logging, and JSON output.
 
 #### Phase 6: Note Workflows
 

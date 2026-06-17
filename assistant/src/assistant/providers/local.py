@@ -19,8 +19,13 @@ class LocalModelResponse:
 
 
 class LocalModelProvider(Protocol):
-    provider_name: str
-    model_name: str
+    @property
+    def provider_name(self) -> str:
+        """Provider identifier."""
+
+    @property
+    def model_name(self) -> str:
+        """Configured model identifier."""
 
     def complete(self, prompt: str) -> LocalModelResponse:
         """Return model output for a single local prompt."""
