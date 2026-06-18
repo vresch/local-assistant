@@ -17,6 +17,7 @@ model synthesis and remote research support stay disabled unless configured.
 
 - [Documentation Map](#documentation-map)
 - [Quick Start](#quick-start)
+- [Installation](#installation)
 - [Daily Workflow](#daily-workflow)
 - [Command Reference](#command-reference)
   - [Index](#index)
@@ -35,7 +36,10 @@ model synthesis and remote research support stay disabled unless configured.
 
 Requires Python 3.10 or newer and `uv`.
 
+From the package directory:
+
 ```bash
+cd assistant
 uv sync
 ```
 
@@ -62,6 +66,44 @@ uv run assistant index
 uv run assistant search "project alpha"
 uv run assistant ask "What did I decide about search?"
 ```
+
+## Installation
+
+Use this when you want to type `assistant ...` from any shell instead of
+`uv run assistant ...`.
+
+From the repository root, install the convenience wrapper into
+`~/.local/bin/assistant`:
+
+```bash
+./local/bin/deploy-assistant
+```
+
+The installer checks that `uv` is available, writes an executable wrapper for
+the current checkout, and prints the test command.
+
+Check that it is executable and wired correctly:
+
+```bash
+ls -l ~/.local/bin/assistant
+assistant --help
+assistant search "project alpha"
+```
+
+If `assistant` is not found, add this to your shell config:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+For a more standard Python CLI install, use the package entry point directly:
+
+```bash
+uv tool install --editable ./assistant
+```
+
+Use the wrapper installer when you want the command to always run from this
+checkout with the repo-local environment and lockfile.
 
 ## Daily Workflow
 

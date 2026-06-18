@@ -1,0 +1,43 @@
+#!/usr/bin/env zsh
+set -euo pipefail
+
+target="$HOME/.local/bin/assistant"
+script_dir="${0:A:h}"
+repo_root="${script_dir:h:h}"
+package_dir="$repo_root/assistant"
+
+if ! command -v uv >/dev/null 2>&1; then
+  print -u2 "Error: uv is required but was not found on PATH."
+  print -u2 "Install uv first: https://docs.astral.sh/uv/getting-started/installation/"
+  exit 1
+fi
+
+if [[ ! -f "$package_dir/pyproject.toml" ]]; then
+  print -u2 "Error: expected assistant package at $package_dir"
+  exit 1
+fi
+
+mkdir -p "${target:h}"
+
+cat > "$target" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+
+cd "$package_dir"
+exec uv run assistant "\$@"
+EOF
+
+chmod 0755 "$target"
+
+print "Installed $target"
+print "Project: $package_dir"
+
+if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+  print ""
+  print "Add this to your shell config if 'assistant' is not found:"
+  print '  export PATH="$HOME/.local/bin:$PATH"'
+fi
+
+print ""
+print "Test it with:"
+print "  assistant --help"
