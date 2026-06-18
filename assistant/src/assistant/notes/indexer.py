@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from assistant.notes.chunker import chunk_markdown
+from assistant.notes.links import extract_links, insert_links, resolve_note_links
 from assistant.notes.metadata import extract_metadata
 
 
@@ -47,6 +48,8 @@ def index_notes(conn: sqlite3.Connection, notes_dir: Path) -> IndexStats:
                 documents.title,
                 documents.file_size,
                 documents.tags_json,
+                documents.aliases_json,
+                documents.links_indexed,
                 COUNT(chunks.id) AS chunk_count,
                 COALESCE(MIN(chunks.token_count), 0) AS min_token_count
             FROM documents
@@ -67,6 +70,7 @@ def index_notes(conn: sqlite3.Connection, notes_dir: Path) -> IndexStats:
         stats = _add(stats, updated=1 if existing else 0, new=0 if existing else 1, chunks=chunk_count)
     removed = cleanup_stale_documents(conn, notes_dir, current_paths)
     stats = _add(stats, removed=removed)
+    resolve_note_links(conn, notes_dir)
     conn.commit()
     return stats
 
@@ -75,6 +79,8 @@ def _needs_metadata_backfill(row: sqlite3.Row, file_size: int) -> bool:
     return (
         row["title"] is None
         or row["tags_json"] is None
+        or row["aliases_json"] is None
+        or int(row["links_indexed"] or 0) == 0
         or int(row["file_size"] or 0) != file_size
         or (int(row["chunk_count"] or 0) > 0 and int(row["min_token_count"] or 0) == 0)
     )
@@ -86,9 +92,11 @@ def index_file(conn: sqlite3.Connection, path: Path, file_hash: str | None = Non
     chunks = chunk_markdown(markdown)
     stat = path.stat()
     metadata = extract_metadata(markdown, path)
+    links = extract_links(markdown)
     mtime_ns = stat.st_mtime_ns
     file_size = stat.st_size
     tags_json = json.dumps(list(metadata.tags), sort_keys=True)
+    aliases_json = json.dumps(list(metadata.aliases), sort_keys=True)
 
     existing = conn.execute("SELECT id FROM documents WHERE path = ?", (str(path),)).fetchone()
     if existing:
@@ -106,22 +114,67 @@ def index_file(conn: sqlite3.Connection, path: Path, file_hash: str | None = Non
                 title = ?,
                 file_size = ?,
                 tags_json = ?,
+                aliases_json = ?,
+                note_type = ?,
+                note_status = ?,
+                created = ?,
+                updated = ?,
+                links_indexed = 1,
                 indexed_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (file_hash, mtime_ns, metadata.title, file_size, tags_json, document_id),
+            (
+                file_hash,
+                mtime_ns,
+                metadata.title,
+                file_size,
+                tags_json,
+                aliases_json,
+                metadata.note_type,
+                metadata.status,
+                metadata.created,
+                metadata.updated,
+                document_id,
+            ),
         )
     else:
         cursor = conn.execute(
             """
-            INSERT INTO documents(path, content_hash, mtime_ns, title, file_size, tags_json)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO documents(
+                path,
+                content_hash,
+                mtime_ns,
+                title,
+                file_size,
+                tags_json,
+                aliases_json,
+                note_type,
+                note_status,
+                created,
+                updated,
+                links_indexed
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             """,
-            (str(path), file_hash, mtime_ns, metadata.title, file_size, tags_json),
+            (
+                str(path),
+                file_hash,
+                mtime_ns,
+                metadata.title,
+                file_size,
+                tags_json,
+                aliases_json,
+                metadata.note_type,
+                metadata.status,
+                metadata.created,
+                metadata.updated,
+            ),
         )
         if cursor.lastrowid is None:
             raise RuntimeError("document insert did not return an id")
         document_id = int(cursor.lastrowid)
+
+    insert_links(conn, document_id, links)
 
     for index, chunk in enumerate(chunks):
         cursor = conn.execute(

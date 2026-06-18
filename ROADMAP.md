@@ -41,7 +41,7 @@ anchors, and section headings together.
 | 3 | [Phase 3: Tooling Layer](#phase-3-tooling-layer) | `done` | Make local tool execution controlled and practical. |
 | 4 | [Phase 4: Local LLM Support](#phase-4-local-llm-support) | `done` | Add optional local generation after deterministic behavior works. |
 | 5 | [Phase 5: Assistant Memory And Task State](#phase-5-assistant-memory-and-task-state) | `done` | Add lightweight local task state across sessions. |
-| 6 | [Phase 6: Note Workflows](#phase-6-note-workflows) | `proposed` | Add practical note operations. |
+| 6 | [Phase 6: Note Workflows](#phase-6-note-workflows) | `done` | Add practical local note workflows. |
 | 7 | [Phase 7: Project-Aware Mode](#phase-7-project-aware-mode) | `proposed` | Extend indexing/search to local project folders. |
 | 8 | [Phase 8: TUI Or Minimal UI](#phase-8-tui-or-minimal-ui) | `done` | Improve ergonomics after commands stabilize. |
 | 9 | [Phase 9: Reliability And Packaging](#phase-9-reliability-and-packaging) | `proposed` | Harden the assistant for regular local use. |
@@ -233,18 +233,73 @@ Acceptance criteria:
 
 ## Phase 6: Note Workflows
 
-Status: `proposed`
+Status: `done`
 
-Outcome: Add practical note operations.
+Outcome: Add practical local note workflows while keeping Markdown files as the only user-facing note format.
 
-Possible work:
+Format decision:
 
-- Add `assistant daily`.
-- Add `assistant capture "thought"`.
-- Add `assistant summarize path/to/note.md`.
-- Add backlinks and related-note discovery.
-- Detect duplicate or near-duplicate notes.
-- Support Markdown frontmatter.
+- Notes remain plain `.md` files under the configured notes directory.
+- YAML is supported only as optional frontmatter inside Markdown files.
+- Do not add standalone YAML note files or separate workflow state files.
+- SQLite stores derived indexes and cache state only; Markdown remains the source of truth.
+
+Implementation order:
+
+1. Improve Markdown metadata parsing.
+   - Parse YAML frontmatter with `pyyaml`.
+   - Extract title, tags, aliases, type, status, created, and updated when present.
+   - Support nested tags such as `#inbox/to-read`.
+   - Keep malformed frontmatter non-fatal.
+
+2. Add note link indexing.
+   - Parse wikilinks such as `[[Note]]`, `[[Note#Heading]]`, and `[[Note|Alias]]`.
+   - Parse regular Markdown links.
+   - Store outbound links in SQLite during indexing.
+   - Resolve note targets by path, title, stem, and aliases when possible.
+
+3. Add first-class capture and daily workflows.
+   - Add `assistant capture "thought"` for quick inbox capture.
+   - Add `assistant daily` to show today's note path.
+   - Add `assistant daily --text "entry"` to append to today's daily note.
+   - Re-index touched notes after successful writes.
+
+4. Add backlink and related-note discovery.
+   - Add `assistant backlinks path/to/note.md`.
+   - Add `assistant related path/to/note.md`.
+   - Rank related notes by explicit links, shared tags, title terms, and FTS overlap.
+
+5. Add local note summarization.
+   - Add `assistant summarize path/to/note.md`.
+   - Keep the MVP extractive and local-only.
+   - Output title, tags, headings, key bullets or paragraphs, and linked notes.
+   - Do not require or expand remote LLM behavior.
+
+Deferred work:
+
+- Duplicate and near-duplicate detection.
+- Link-safe note rename and move operations.
+- Graph visualization.
+- Bulk property editing.
+- New note workflow config formats.
+
+Acceptance criteria:
+
+- Existing index, search, ask, task, tool, and TUI behavior still works.
+- `assistant capture`, `assistant daily`, `assistant backlinks`, `assistant related`, and `assistant summarize` work without a model provider.
+- Notes created by the assistant are valid Markdown and remain usable in Logseq, Obsidian, VS Code, Git, and grep.
+- Frontmatter and links are indexed deterministically with focused tests.
+- Remote research support remains optional and disabled unless configured.
+
+Implemented behavior:
+
+- Metadata parsing uses `pyyaml` for optional Markdown frontmatter and extracts title, tags, aliases, type, status, created, and updated fields.
+- Inline tags support nested forms such as `#inbox/to-read`; malformed frontmatter is ignored without failing indexing.
+- Indexing stores outbound wikilinks and local Markdown links in SQLite and resolves note targets by path, title, stem, or aliases.
+- `assistant capture "thought"` writes a Markdown inbox note and re-indexes it.
+- `assistant daily` prints today's daily note path; `assistant daily --text "entry"` appends to it and re-indexes it.
+- `assistant backlinks`, `assistant related`, and `assistant summarize` provide local-only note discovery and extractive summaries.
+- Focused tests cover frontmatter parsing, link indexing/resolution, capture, daily notes, backlinks, related notes, summaries, and CLI logging.
 
 ## Phase 7: Project-Aware Mode
 

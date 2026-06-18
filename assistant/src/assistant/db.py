@@ -83,6 +83,17 @@ def initialize(conn: sqlite3.Connection) -> None:
             message TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS note_links (
+            id INTEGER PRIMARY KEY,
+            source_document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            target_raw TEXT NOT NULL,
+            target_path TEXT,
+            target_heading TEXT,
+            alias TEXT,
+            link_type TEXT NOT NULL,
+            resolved_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL
+        );
         """
     )
     _ensure_columns(
@@ -92,6 +103,12 @@ def initialize(conn: sqlite3.Connection) -> None:
             "title": "TEXT",
             "file_size": "INTEGER NOT NULL DEFAULT 0",
             "tags_json": "TEXT NOT NULL DEFAULT '[]'",
+            "aliases_json": "TEXT NOT NULL DEFAULT '[]'",
+            "note_type": "TEXT",
+            "note_status": "TEXT",
+            "created": "TEXT",
+            "updated": "TEXT",
+            "links_indexed": "INTEGER NOT NULL DEFAULT 0",
         },
     )
     _ensure_columns(
@@ -104,6 +121,8 @@ def initialize(conn: sqlite3.Connection) -> None:
             "end_line": "INTEGER NOT NULL DEFAULT 1",
         },
     )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_note_links_source ON note_links(source_document_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_note_links_resolved ON note_links(resolved_document_id)")
     conn.commit()
 
 

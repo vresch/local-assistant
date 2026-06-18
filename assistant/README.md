@@ -23,6 +23,7 @@ model synthesis and remote research support stay disabled unless configured.
   - [Search](#search)
   - [Ask](#ask)
   - [Research](#research)
+  - [Note Workflows](#note-workflows)
   - [Tasks](#tasks)
   - [Inspect](#inspect)
 - [Tool Usage](#tool-usage)
@@ -90,6 +91,11 @@ All commands write local run logs.
 | `assistant show` | Inspect one indexed chunk. | None |
 | `assistant ask` | Answer from retrieved local notes. | Never remote |
 | `assistant research` | Research with local notes first. | Optional, only when configured |
+| `assistant capture` | Save a quick inbox Markdown note. | None |
+| `assistant daily` | Show or append to today's daily Markdown note. | None |
+| `assistant backlinks` | Show notes that link to an indexed note. | None |
+| `assistant related` | Show locally related notes. | None |
+| `assistant summarize` | Summarize one note extractively. | None |
 | `assistant task ...` | Track local task state. | None |
 | `assistant dashboard` | Show read-only terminal status. | None |
 | `assistant ui` | Open the Textual workflow TUI. | Same as selected workflow |
@@ -175,6 +181,39 @@ Force the configured remote provider after local retrieval:
 ```bash
 uv run assistant research "best architecture for local-first AI assistants" --force-remote --limit 8
 ```
+
+### Note Workflows
+
+Capture a quick thought as a Markdown inbox note:
+
+```bash
+uv run assistant capture "Follow up on the local search ranking idea #inbox/to-read"
+```
+
+Show today's daily note path, or append an entry:
+
+```bash
+uv run assistant daily
+uv run assistant daily --text "Reviewed the SQLite link index."
+```
+
+Inspect links and related notes after indexing:
+
+```bash
+uv run assistant backlinks notes/project-alpha.md
+uv run assistant related notes/project-alpha.md
+```
+
+Summarize one note locally without a model provider:
+
+```bash
+uv run assistant summarize notes/project-alpha.md
+```
+
+Notes remain plain Markdown files under `ASSISTANT_NOTES_DIR`. Optional YAML
+frontmatter is indexed for title, tags, aliases, type, status, created, and
+updated fields. Wikilinks and local Markdown links are indexed for backlink and
+related-note discovery.
 
 ### Tasks
 

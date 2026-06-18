@@ -20,6 +20,17 @@ from assistant.logs.logger import finish_run, log_event, start_run, update_run_r
 from assistant.notes.categorizer import NoteCategory, categorise_notes
 from assistant.notes.indexer import index_notes
 from assistant.notes.search import SearchResult, get_chunk, search_notes
+from assistant.notes.workflows import (
+    LinkRecord,
+    NoteSummary,
+    RelatedNote,
+    append_daily_note,
+    capture_note,
+    daily_note_path,
+    get_backlinks,
+    related_notes,
+    summarize_note,
+)
 from assistant.orchestrator import answer_question
 from assistant.providers.local import build_local_provider
 from assistant.providers.remote import build_remote_provider
@@ -370,6 +381,131 @@ def show(chunk_id: int) -> None:
         except Exception as exc:
             finish_run(conn, run_id, "failed", str(exc))
             debug.exception("command=show status=failed run_id=%s", run_id)
+            raise
+
+
+@app.command()
+def capture(text: str) -> None:
+    """Capture a quick thought as an inbox Markdown note."""
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=capture notes_dir=%s db_path=%s", settings.notes_dir, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "capture", text, "notes.capture")
+        try:
+            result = capture_note(conn, settings.notes_dir, text)
+            summary = f"path={result.path} chunks={result.indexed_chunks}"
+            log_event(conn, run_id, "capture", summary)
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=capture status=succeeded run_id=%s %s", run_id, summary)
+            console.print(summary, markup=False)
+        except Exception as exc:
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=capture status=failed run_id=%s", run_id)
+            raise
+
+
+@app.command()
+def daily(text: str | None = typer.Option(None, "--text", "-t", help="Append text to today's daily note.")) -> None:
+    """Show or append to today's daily Markdown note."""
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=daily append=%s notes_dir=%s db_path=%s", text is not None, settings.notes_dir, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "daily", text, "notes.daily")
+        try:
+            if text is None:
+                path = daily_note_path(settings.notes_dir)
+                summary = f"path={path}"
+                console.print(summary, markup=False)
+            else:
+                result = append_daily_note(conn, settings.notes_dir, text)
+                summary = f"path={result.path} chunks={result.indexed_chunks}"
+                console.print(summary, markup=False)
+            log_event(conn, run_id, "daily", summary)
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=daily status=succeeded run_id=%s %s", run_id, summary)
+        except Exception as exc:
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=daily status=failed run_id=%s", run_id)
+            raise
+
+
+@app.command()
+def backlinks(path: Path) -> None:
+    """Show notes that link to an indexed note."""
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=backlinks path=%s db_path=%s", path, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "backlinks", str(path), "notes.backlinks")
+        try:
+            links = get_backlinks(conn, settings.notes_dir, path)
+            _print_links("Backlinks", links)
+            summary = f"path={path} backlinks={len(links)}"
+            log_event(conn, run_id, "backlinks", summary)
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=backlinks status=succeeded run_id=%s %s", run_id, summary)
+        except Exception as exc:
+            if isinstance(exc, KeyError):
+                message = str(exc).strip("'")
+                finish_run(conn, run_id, "failed", message)
+                err_console.print(message)
+                raise typer.Exit(1) from exc
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=backlinks status=failed run_id=%s", run_id)
+            raise
+
+
+@app.command()
+def related(path: Path, limit: int = typer.Option(10, "--limit", min=1)) -> None:
+    """Show locally related notes."""
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=related path=%s limit=%s db_path=%s", path, limit, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "related", str(path), "notes.related")
+        try:
+            notes = related_notes(conn, settings.notes_dir, path, limit=limit)
+            _print_related(notes)
+            summary = f"path={path} related={len(notes)}"
+            log_event(conn, run_id, "related", summary)
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=related status=succeeded run_id=%s %s", run_id, summary)
+        except Exception as exc:
+            if isinstance(exc, KeyError):
+                message = str(exc).strip("'")
+                finish_run(conn, run_id, "failed", message)
+                err_console.print(message)
+                raise typer.Exit(1) from exc
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=related status=failed run_id=%s", run_id)
+            raise
+
+
+@app.command()
+def summarize(path: Path) -> None:
+    """Summarize a Markdown note without a model provider."""
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=summarize path=%s db_path=%s", path, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "summarize", str(path), "notes.summarize")
+        try:
+            summary = summarize_note(conn, settings.notes_dir, path)
+            _print_note_summary(summary)
+            message = f"path={summary.path} headings={len(summary.headings)} links={len(summary.links)}"
+            log_event(conn, run_id, "summary", message)
+            finish_run(conn, run_id, "succeeded", message)
+            debug.info("command=summarize status=succeeded run_id=%s %s", run_id, message)
+        except Exception as exc:
+            if isinstance(exc, KeyError):
+                message = str(exc).strip("'")
+                finish_run(conn, run_id, "failed", message)
+                err_console.print(message)
+                raise typer.Exit(1) from exc
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=summarize status=failed run_id=%s", run_id)
             raise
 
 
@@ -1007,6 +1143,49 @@ def _print_chunk(result: SearchResult) -> None:
     _append_dashboard_kv(details, "tokens", result.token_count)
     console.print(Panel(details, title=Text("Chunk Metadata", style="bold white"), border_style=DASHBOARD_BORDER))
     console.print(result.content)
+
+
+def _print_links(title: str, links: list[LinkRecord]) -> None:
+    table = _dashboard_table(title)
+    table.add_column("Source", overflow="fold", style=DASHBOARD_VALUE)
+    table.add_column("Target", overflow="fold", style=DASHBOARD_GOOD)
+    table.add_column("Kind", style=DASHBOARD_MUTED)
+    table.add_column("Alias", overflow="fold", style=DASHBOARD_MUTED)
+    for link in links:
+        target = link.resolved_title or link.target_path or link.target_raw
+        if link.target_heading:
+            target = f"{target}#{link.target_heading}"
+        table.add_row(link.source_title or link.source_path, target, link.link_type, link.alias or "")
+    console.print(table)
+
+
+def _print_related(notes: list[RelatedNote]) -> None:
+    table = _dashboard_table("Related Notes")
+    table.add_column("Score", justify="right", style=DASHBOARD_GOOD)
+    table.add_column("Title", overflow="fold", style=DASHBOARD_VALUE)
+    table.add_column("Path", overflow="fold", style=DASHBOARD_MUTED)
+    table.add_column("Reasons", overflow="fold")
+    for note in notes:
+        table.add_row(f"{note.score:.1f}", note.title, note.path, "; ".join(note.reasons))
+    console.print(table)
+
+
+def _print_note_summary(summary: NoteSummary) -> None:
+    details = Text()
+    _append_dashboard_kv(details, "title", summary.title)
+    _append_dashboard_kv(details, "path", summary.path, value_style=DASHBOARD_MUTED)
+    _append_dashboard_kv(details, "tags", ", ".join(summary.tags) or "none")
+    console.print(Panel(details, title=Text("Note Summary", style="bold white"), border_style=DASHBOARD_BORDER))
+    if summary.headings:
+        console.print("[bold cyan]Headings[/bold cyan]")
+        for heading in summary.headings:
+            console.print(f"- {heading}", markup=False)
+    if summary.highlights:
+        console.print("[bold cyan]Highlights[/bold cyan]")
+        for highlight in summary.highlights:
+            console.print(f"- {highlight}", markup=False)
+    if summary.links:
+        _print_links("Linked Notes", list(summary.links))
 
 
 def _print_categories(categories: list[NoteCategory]) -> None:

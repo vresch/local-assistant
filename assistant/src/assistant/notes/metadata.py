@@ -4,23 +4,40 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 
 H1_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
-INLINE_TAG_RE = re.compile(r"(?<![\w/])#([A-Za-z][A-Za-z0-9_-]*)\b")
+INLINE_TAG_RE = re.compile(r"(?<![\w/])#([A-Za-z][A-Za-z0-9_/-]*)\b")
 
 
 @dataclass(frozen=True)
 class NoteMetadata:
     title: str
     tags: tuple[str, ...]
+    aliases: tuple[str, ...] = ()
+    note_type: str | None = None
+    status: str | None = None
+    created: str | None = None
+    updated: str | None = None
 
 
 def extract_metadata(markdown: str, path: Path) -> NoteMetadata:
     frontmatter, body = _split_frontmatter(markdown)
-    title = _extract_title(body) or path.stem
-    tags = set(_frontmatter_tags(frontmatter))
+    data = _parse_frontmatter(frontmatter)
+    title = _as_text(data.get("title")) or _extract_title(body) or path.stem
+    tags = set(_frontmatter_tags(data))
     tags.update(_inline_tags(body))
-    return NoteMetadata(title=title, tags=tuple(sorted(tags, key=str.lower)))
+    aliases = tuple(sorted(set(_phrase_list(data.get("aliases"))), key=str.lower))
+    return NoteMetadata(
+        title=title,
+        tags=tuple(sorted(tags, key=str.lower)),
+        aliases=aliases,
+        note_type=_as_text(data.get("type")),
+        status=_as_text(data.get("status")),
+        created=_as_text(data.get("created")),
+        updated=_as_text(data.get("updated")),
+    )
 
 
 def _split_frontmatter(markdown: str) -> tuple[str | None, str]:
@@ -40,34 +57,52 @@ def _extract_title(markdown: str) -> str | None:
     return match.group(1).strip()
 
 
-def _frontmatter_tags(frontmatter: str | None) -> list[str]:
+def _parse_frontmatter(frontmatter: str | None) -> dict[str, object]:
     if not frontmatter:
-        return []
-    lines = frontmatter.splitlines()
-    tags: list[str] = []
-    in_tags_list = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("tags:"):
-            in_tags_list = True
-            value = stripped.split(":", 1)[1].strip()
-            tags.extend(_parse_tag_value(value))
-            continue
-        if in_tags_list and stripped.startswith("- "):
-            tags.extend(_parse_tag_value(stripped[2:].strip()))
-            continue
-        if stripped and not line.startswith((" ", "\t")):
-            in_tags_list = False
-    return tags
+        return {}
+    try:
+        parsed = yaml.safe_load(frontmatter)
+    except yaml.YAMLError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
-def _parse_tag_value(value: str) -> list[str]:
-    value = value.strip()
-    if not value:
+def _frontmatter_tags(data: dict[str, object]) -> list[str]:
+    return [_normalize_tag(tag) for tag in _text_list(data.get("tags")) if _normalize_tag(tag)]
+
+
+def _text_list(value: object) -> list[str]:
+    if value is None:
         return []
-    if value.startswith("[") and value.endswith("]"):
-        value = value[1:-1]
-    return [_normalize_tag(part) for part in re.split(r"[,\s]+", value) if _normalize_tag(part)]
+    if isinstance(value, (list, tuple, set)):
+        items: list[str] = []
+        for item in value:
+            items.extend(_text_list(item))
+        return items
+    if isinstance(value, str):
+        if "," in value:
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return [part for part in re.split(r"\s+", value.strip()) if part]
+    return [str(value)]
+
+
+def _phrase_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        items: list[str] = []
+        for item in value:
+            items.extend(_phrase_list(item))
+        return items
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _as_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _inline_tags(markdown: str) -> list[str]:
