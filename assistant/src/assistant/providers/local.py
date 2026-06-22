@@ -136,7 +136,7 @@ def _load_llama_class() -> Any:
     except ImportError as exc:
         raise RuntimeError(
             "llama-cpp-python is required for local model answers. "
-            "Install dependencies with `uv sync` or run `assistant ask --no-model`."
+            "Install it with `uv sync --extra local-llm` or run `assistant ask --no-model`."
         ) from exc
 
 

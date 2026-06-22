@@ -203,6 +203,17 @@ uv run assistant ask "What did I decide about search?" --model-required
 Supported local providers are `llama-cpp-python` and `llama.cpp-server`.
 `assistant ask` never calls a remote provider.
 
+The in-process `llama-cpp-python` provider is an optional extra (it builds a
+native library). Install it only when you want local generation:
+
+```bash
+uv sync --extra local-llm
+```
+
+Without it, `assistant ask` still works and returns extractive local-note
+answers. The `llama.cpp-server` provider needs no extra; it talks to a running
+server over HTTP.
+
 ### Research
 
 Research is optional and remains local-first. It searches local notes first, then may
