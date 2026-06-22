@@ -321,8 +321,8 @@ database, and logging functions used by CLI commands.
 
 TUI workflows:
 
-- `Search`: query indexed notes, filter by limit/tag/path/since, preview chunks, and add chunks to the selected source basket.
 - `Ask`: ask from local notes with the configured local model enabled by default, falling back to extractive answers when no local provider is configured; selected sources can be used explicitly.
+- `Search`: query indexed notes, filter by limit/tag/path/since, preview chunks, and add chunks to the selected source basket.
 - `Sources`: inspect and clear the in-memory selected source basket.
 - `Tools`: inspect registered tools, dry-run commands, and run approved tools.
 - `Runs`: inspect recent command runs and their event timeline.
