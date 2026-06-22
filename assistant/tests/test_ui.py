@@ -181,6 +181,7 @@ def test_assistant_ui_mounts_with_settings(tmp_path: Path) -> None:
     async def run_app() -> None:
         app = AssistantUi(settings)
         async with app.run_test():
+            assert app.query_one("#workflow-tabs").active == "ask-tab"
             pass
 
     asyncio.run(run_app())

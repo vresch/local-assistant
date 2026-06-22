@@ -203,6 +203,17 @@ uv run assistant ask "What did I decide about search?" --model-required
 Supported local providers are `llama-cpp-python` and `llama.cpp-server`.
 `assistant ask` never calls a remote provider.
 
+The in-process `llama-cpp-python` provider is an optional extra (it builds a
+native library). Install it only when you want local generation:
+
+```bash
+uv sync --extra local-llm
+```
+
+Without it, `assistant ask` still works and returns extractive local-note
+answers. The `llama.cpp-server` provider needs no extra; it talks to a running
+server over HTTP.
+
 ### Research
 
 Research is optional and remains local-first. It searches local notes first, then may
@@ -321,8 +332,8 @@ database, and logging functions used by CLI commands.
 
 TUI workflows:
 
-- `Search`: query indexed notes, filter by limit/tag/path/since, preview chunks, and add chunks to the selected source basket.
 - `Ask`: ask from local notes with the configured local model enabled by default, falling back to extractive answers when no local provider is configured; selected sources can be used explicitly.
+- `Search`: query indexed notes, filter by limit/tag/path/since, preview chunks, and add chunks to the selected source basket.
 - `Sources`: inspect and clear the in-memory selected source basket.
 - `Tools`: inspect registered tools, dry-run commands, and run approved tools.
 - `Runs`: inspect recent command runs and their event timeline.

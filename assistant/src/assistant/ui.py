@@ -463,10 +463,10 @@ class AssistantUi(App[None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with TabbedContent(id="workflow-tabs"):
-            with TabPane("Search", id="search-tab"):
-                yield from self._search_view()
             with TabPane("Ask", id="ask-tab"):
                 yield from self._ask_view()
+            with TabPane("Search", id="search-tab"):
+                yield from self._search_view()
             with TabPane("Sources", id="sources-tab"):
                 yield from self._sources_view()
             with TabPane("Tools", id="tools-tab"):
