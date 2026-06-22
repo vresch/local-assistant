@@ -17,7 +17,8 @@ This file owns delivery status and future work. Product behavior and architectur
 - [Phase 6: Note Workflows](#phase-6-note-workflows)
 - [Phase 7: Project-Aware Mode](#phase-7-project-aware-mode)
 - [Phase 8: TUI Or Minimal UI](#phase-8-tui-or-minimal-ui)
-- [Phase 9: Reliability And Packaging](#phase-9-reliability-and-packaging)
+- [Phase 9: End-User Packaging](#phase-9-end-user-packaging)
+- [Phase 10: Reliability](#phase-10-reliability)
 
 ## Status Values
 
@@ -44,7 +45,8 @@ anchors, and section headings together.
 | 6 | [Phase 6: Note Workflows](#phase-6-note-workflows) | `done` | Add practical local note workflows. |
 | 7 | [Phase 7: Project-Aware Mode](#phase-7-project-aware-mode) | `proposed` | Extend indexing/search to local project folders. |
 | 8 | [Phase 8: TUI Or Minimal UI](#phase-8-tui-or-minimal-ui) | `done` | Improve ergonomics after commands stabilize. |
-| 9 | [Phase 9: Reliability And Packaging](#phase-9-reliability-and-packaging) | `proposed` | Harden the assistant for regular local use. |
+| 9 | [Phase 9: End-User Packaging](#phase-9-end-user-packaging) | `proposed` | Make the assistant straightforward for an end user to install and configure. |
+| 10 | [Phase 10: Reliability](#phase-10-reliability) | `proposed` | Harden the assistant for regular local use. |
 
 ## Ordering Rationale
 
@@ -52,7 +54,8 @@ anchors, and section headings together.
 - Improve retrieval quality before adding broader behavior.
 - Make tool execution useful before model-dependent workflows.
 - Add local LLM support only after the non-LLM core works.
-- Add UI and packaging after the command model is proven.
+- Add UI and end-user packaging after the command model is proven.
+- Add reliability hardening after packaging clarifies the expected installed shape.
 
 ## Phase 1: Local Retrieval CLI
 
@@ -331,7 +334,23 @@ Implemented behavior:
 - Tool dry-runs and approved tool execution use the same registry, validation, and logging path as the CLI.
 - Runs and logs can be inspected without treating raw storage tables as the main workflow.
 
-## Phase 9: Reliability And Packaging
+## Phase 9: End-User Packaging
+
+Status: `proposed`
+
+Outcome: Make the assistant straightforward for an end user to install and configure.
+
+Possible work:
+
+- Add installable CLI packaging.
+- Add config discovery and validation.
+- Add first-run setup or diagnostics.
+- Improve user-facing setup documentation.
+- Document supported local model and no-model modes.
+- Document where local data, logs, and indexes live.
+- Provide upgrade guidance for package and config changes.
+
+## Phase 10: Reliability
 
 Status: `proposed`
 
@@ -339,11 +358,8 @@ Outcome: Harden the assistant for regular local use.
 
 Possible work:
 
-- Add installable CLI packaging.
-- Add config discovery and validation.
 - Add database migrations.
 - Add backup/export commands.
 - Handle index corruption and rebuilds.
 - Add logging retention.
 - Expand tests around indexing, search, tools, and logs.
-- Improve documentation.
