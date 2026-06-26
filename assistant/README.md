@@ -134,6 +134,7 @@ All commands write local run logs.
 | `assistant ask` | Answer from retrieved local notes. | Never remote |
 | `assistant research` | Research with local notes first. | Optional, only when configured |
 | `assistant capture` | Save a quick inbox Markdown note. | None |
+| `assistant voice-note` | Ingest a voice-note transcript JSON as an inbox note. | None |
 | `assistant daily` | Show or append to today's daily Markdown note. | None |
 | `assistant backlinks` | Show notes that link to an indexed note. | None |
 | `assistant related` | Show locally related notes. | None |
@@ -241,6 +242,24 @@ Capture a quick thought as a Markdown inbox note:
 
 ```bash
 uv run assistant capture "Follow up on the local search ranking idea #inbox/to-read"
+```
+
+Ingest a voice-note transcript into the inbox. The `voice-note` tool (in the
+`python-tools` workspace) writes a `{meta, data}` transcript JSON; this command
+parses that envelope, renders a frontmatter Markdown note (`type: voice-note`,
+tagged `voice-note`, titled by session), and indexes it:
+
+```bash
+uv run assistant voice-note logs/voice_notes/voice_note_2026_06_23-22_15_00/transcribe.json
+```
+
+The expected transcript shape (`schema_version` 1.0):
+
+```json
+{
+  "meta": { "schema_version": "1.0", "tool": "voice-note", "session": "...", "created_at": "2026-06-23T22:15:00" },
+  "data": [ { "audio": "audio_....wav", "text": "...", "created_at": "2026-06-23T22:15:30" } ]
+}
 ```
 
 Show today's daily note path, or append an entry:

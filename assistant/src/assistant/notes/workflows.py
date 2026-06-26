@@ -18,6 +18,7 @@ from assistant.notes.links import (
 )
 from assistant.notes.metadata import extract_metadata
 from assistant.notes.search import search_notes
+from assistant.notes.voice_note import load_voice_note, voice_note_markdown
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,19 @@ def capture_note(conn: sqlite3.Connection, notes_dir: Path, text: str) -> Captur
         ]
     )
     path.write_text(markdown, encoding="utf-8")
+    chunks = _index_touched_note(conn, notes_dir, path)
+    return CaptureResult(path=path, indexed_chunks=chunks)
+
+
+def capture_voice_note(conn: sqlite3.Connection, notes_dir: Path, json_path: Path) -> CaptureResult:
+    """Ingest a voice-note ``{meta, data}`` transcript file as a Markdown note."""
+    document = load_voice_note(json_path)
+    if not document.text.strip():
+        raise ValueError("voice-note transcript has no text to capture")
+    inbox_dir = notes_dir.expanduser() / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    path = inbox_dir / f"{document.session}.md"
+    path.write_text(voice_note_markdown(document), encoding="utf-8")
     chunks = _index_touched_note(conn, notes_dir, path)
     return CaptureResult(path=path, indexed_chunks=chunks)
 
