@@ -1143,8 +1143,8 @@ def _local_provider_for_ui(settings: Settings, *, use_model: bool) -> tuple[Loca
 
 def _local_model_label(settings: Settings) -> str:
     if settings.local_provider is None:
-        return "Model: extractive fallback"
-    return f"Model: {settings.local_provider} ({settings.local_model or 'local'})"
+        return "Model: extractive"
+    return f"Model: {settings.local_model or settings.local_provider}"
 
 
 def _log_answer(

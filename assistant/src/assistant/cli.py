@@ -26,6 +26,7 @@ from assistant.notes.workflows import (
     RelatedNote,
     append_daily_note,
     capture_note,
+    capture_voice_note,
     daily_note_path,
     get_backlinks,
     related_notes,
@@ -402,6 +403,32 @@ def capture(text: str) -> None:
         except Exception as exc:
             finish_run(conn, run_id, "failed", str(exc))
             debug.exception("command=capture status=failed run_id=%s", run_id)
+            raise
+
+
+@app.command("voice-note")
+def voice_note(path: Path) -> None:
+    """Ingest a voice-note transcript JSON ({meta, data}) as an inbox Markdown note."""
+    settings = get_settings()
+    debug = get_debug_logger(settings.debug_log_path)
+    debug.info("command=voice-note path=%s notes_dir=%s db_path=%s", path, settings.notes_dir, settings.db_path)
+    with connect(settings.db_path) as conn:
+        run_id = start_run(conn, "voice-note", str(path), "notes.voice_note")
+        try:
+            result = capture_voice_note(conn, settings.notes_dir, path)
+            summary = f"path={result.path} chunks={result.indexed_chunks}"
+            log_event(conn, run_id, "voice_note", summary)
+            finish_run(conn, run_id, "succeeded", summary)
+            debug.info("command=voice-note status=succeeded run_id=%s %s", run_id, summary)
+            console.print(summary, markup=False)
+        except Exception as exc:
+            if isinstance(exc, (FileNotFoundError, ValueError)):
+                message = str(exc)
+                finish_run(conn, run_id, "failed", message)
+                err_console.print(message)
+                raise typer.Exit(1) from exc
+            finish_run(conn, run_id, "failed", str(exc))
+            debug.exception("command=voice-note status=failed run_id=%s", run_id)
             raise
 
 
